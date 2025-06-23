@@ -19,6 +19,10 @@ import { createServerClient } from '@supabase/ssr';
 import { redirect, type Handle } from '@sveltejs/kit';
 import * as jose from 'jose';
 import type { Session } from '@supabase/supabase-js';
+import { locales, baseLocale } from '$lib/i18n-utils';
+
+// import { setLocale } from '$lib/i18n/i18n-svelte';
+
 
 // Define the accurate Supabase JWT payload structure
 export type SupabaseJwt = {
@@ -29,6 +33,11 @@ export type SupabaseJwt = {
     is_anonymous?: boolean; iss?: string; jti?: string; nbf?: string;
     user_metadata?: { [key: string]: any; };
 } & jose.JWTPayload;
+
+
+// Validates if a string is a supported locale
+const isValidLocale = (locale: string): locale is typeof locales[number] =>
+    locales.includes(locale as any);
 
 export const handle: Handle = async ({ event, resolve }) => {
     console.log(`\n--- Handling request for: ${event.url.pathname} ---`); // DEBUG
@@ -136,6 +145,41 @@ export const handle: Handle = async ({ event, resolve }) => {
      * Resolve the request.
      * SvelteKit automatically passes `event.locals.session` to the root layout data.
      */
+
+    // Try to get locale from URL path (first segment)
+    const urlSegments = event.url.pathname.split('/');
+    const urlLocale = urlSegments[1]?.toLowerCase();
+
+    // Check cookie if no locale in URL
+    const cookieLocale = event.cookies.get('zungri-lang')?.toLowerCase();
+
+    // Get Accept-Language header
+    const acceptLanguage = event.request.headers.get('accept-language');
+    const headerLocale = acceptLanguage?.split(',')[0]?.split('-')[0]?.toLowerCase();
+
+    let locale: string;
+
+    // Determine locale with priority: URL > Cookie > Header > Default
+    if (urlLocale && isValidLocale(urlLocale)) {
+        locale = urlLocale;
+    } else if (cookieLocale && isValidLocale(cookieLocale)) {
+        locale = cookieLocale;
+    } else if (headerLocale && isValidLocale(headerLocale)) {
+        locale = headerLocale;
+        // Set cookie when using header-based locale
+        event.cookies.set('zungri-lang', headerLocale, {
+            path: '/',
+            maxAge: 60 * 60 * 24 * 365, // 1 year
+            httpOnly: true,
+            sameSite: 'lax'
+        });
+    } else {
+        locale = baseLocale;
+    }
+
+    // Set locale for typesafe-i18n
+    // setLocale(locale);
+
     return resolve(event, {
         filterSerializedResponseHeaders(name) {
             return name === 'content-range' || name === 'x-supabase-api-version';

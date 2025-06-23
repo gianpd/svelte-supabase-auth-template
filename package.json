@@ -11,7 +11,8 @@
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
 		"format": "prettier --write .",
-		"lint": "prettier --check . && eslint ."
+		"lint": "prettier --check . && eslint .",
+		"typesafe-i18n": "typesafe-i18n"
 	},
 	"devDependencies": {
 		"@eslint/compat": "^1.2.5",
@@ -23,6 +24,7 @@
 		"@tailwindcss/postcss": "^4.1.5",
 		"@tailwindcss/typography": "^0.5.15",
 		"@tailwindcss/vite": "^4.0.0",
+		"@types/node": "^24.0.3",
 		"eslint": "^9.18.0",
 		"eslint-config-prettier": "^10.0.1",
 		"eslint-plugin-svelte": "^3.0.0",
@@ -39,20 +41,23 @@
 	},
 	"pnpm": {
 		"onlyBuiltDependencies": [
+			"@tailwindcss/oxide",
 			"esbuild"
 		]
 	},
 	"dependencies": {
 		"@supabase/ssr": "^0.6.1",
 		"@supabase/supabase-js": "^2.50.0",
+		"@tailwindcss/aspect-ratio": "^0.4.2",
+		"@vercel/analytics": "^1.5.0",
 		"autoprefixer": "^10.4.21",
 		"daisyui": "^5.0.35",
 		"jose": "^6.0.11",
+		"lucide-svelte": "^0.508.0",
 		"sveltekit": "link:@vercel/analytics/sveltekit",
 		"sveltekit-superforms": "^2.27.0",
 		"tailwindcss-animate": "^1.0.7",
-		"@vercel/analytics": "^1.5.0",
-		"lucide-svelte": "^0.508.0",
+		"typesafe-i18n": "^5.26.2",
 		"zod": "^3.25.67"
 	}
 }
