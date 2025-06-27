@@ -33,7 +33,7 @@ export const actions: Actions = {
 
         try {
             // Forward the validated data to the backend API
-            const response = await fetch('/api/v1/content/contact', {
+            const response = await fetch('api/v1/content/contact', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
