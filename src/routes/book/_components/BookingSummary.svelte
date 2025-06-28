@@ -1,64 +1,46 @@
 <script lang="ts">
+	/**
+	 * @file Booking Summary Component
+	 * @purpose Displays a real-time summary of the user's booking selections and provides primary navigation controls.
+	 *
+	 * @dependencies
+	 * - Svelte: For component logic and reactivity.
+	 * - bookingStore: To access reactive state like summary details, price, and validation errors.
+	 * - lucide-svelte: For icons.
+	 *
+	 * @notes
+	 * - Uses `$bindable()` for `currentStep` to create a two-way binding with the parent page.
+	 * - Disables the "Proceed to Payment" button until all steps are complete and the form is valid.
+	 * - Provides a "Start Over" button to easily reset the entire booking process.
+	 */
 	import {
 		bookingActions,
 		bookingSummary,
 		isCreatingBooking,
-		selectedDate,
-		selectedTimeSlot,
-		totalPrice,
-		totalTickets,
-		validationErrors,
-		customerInfo
+		customerInfo,
+		validationErrors
 	} from '$lib/stores/bookingStore';
-	import {
-		ArrowLeft,
-		ArrowRight,
-		Calendar,
-		Clock,
-		CreditCard,
-		Loader2,
-		Ticket
-	} from 'lucide-svelte';
+	import { Calendar, Clock, CreditCard, Loader2, Ticket, RotateCcw } from 'lucide-svelte';
 
 	let {
 		currentStep = $bindable(),
 		handleProceedToPayment
-	}: { currentStep: number; handleProceedToPayment: () => Promise<void> } = $props();
+	}: {
+		currentStep: number;
+		handleProceedToPayment: () => Promise<void>;
+	} = $props();
 
-	// Derived state to check if the customer form is valid
-	const isFormValid = $derived(
+	// Derived state to check if the customer form is valid.
+	const isCustomerFormValid = $derived(
 		!$validationErrors.name &&
 			!$validationErrors.email &&
 			!!$customerInfo.name &&
 			!!$customerInfo.email
 	);
 
-	// Derived state for enabling/disabling buttons
-	let canProceedToStep2 = $derived($selectedDate !== null);
-	let canProceedToStep3 = $derived(canProceedToStep2 && $selectedTimeSlot !== null);
-	let canProceedToStep4 = $derived(canProceedToStep3 && $totalTickets > 0);
-	let canProceedToPayment = $derived(canProceedToStep4 && isFormValid);
+	// Derived state for enabling the final payment button.
+	const canProceedToPayment = $derived($bookingSummary.isComplete && isCustomerFormValid);
 
-	// Add this function to your <script> block
-	function isStepAccessible(step: number) {
-		switch (step) {
-			case 2:
-				return canProceedToStep2;
-			case 3:
-				return canProceedToStep3;
-			case 4:
-				return canProceedToStep4;
-			default:
-				return true; // Step 1 is always accessible
-		}
-	}
-
-	function nextStep() {
-		currentStep++;
-	}
-	function previousStep() {
-		currentStep--;
-	}
 	function startOver() {
 		bookingActions.resetBooking();
 		currentStep = 1;
@@ -68,87 +50,82 @@
 <div class="summary-card">
 	<h3 class="summary-title">Booking Summary</h3>
 
-	{#if $totalTickets === 0 && !$selectedDate}
-		<div class="summary-placeholder">Your selections will appear here.</div>
-	{/if}
-
-	<!-- Date Summary -->
-	{#if $selectedDate}
-		<div class="summary-item">
-			<header>
-				<Calendar class="icon-primary" />
-				<span>Visit Date</span>
-			</header>
-			<p>
-				{$selectedDate.toLocaleDateString('en-GB', {
-					weekday: 'long',
-					year: 'numeric',
-					month: 'long',
-					day: 'numeric'
-				})}
-			</p>
+	{#if $bookingSummary.totalTickets === 0 && !$bookingSummary.date}
+		<div class="summary-placeholder">
+			<p>Your selections will appear here as you proceed.</p>
 		</div>
 	{/if}
 
-	<!-- Time Slot Summary -->
-	{#if $selectedTimeSlot}
-		<div class="summary-item">
-			<header>
-				<Clock class="icon-primary" />
-				<span>Time Slot</span>
-			</header>
-			<p>
-				{new Date($selectedTimeSlot.start_time).toLocaleTimeString('en-GB', {
-					hour: '2-digit',
-					minute: '2-digit'
-				})} -
-				{new Date($selectedTimeSlot.end_time).toLocaleTimeString('en-GB', {
-					hour: '2-digit',
-					minute: '2-digit'
-				})}
-			</p>
-		</div>
-	{/if}
-
-	<!-- Tickets Summary -->
-	{#if $totalTickets > 0}
-		<div class="summary-item">
-			<header>
-				<Ticket class="icon-primary" />
-				<span>Tickets</span>
-			</header>
-			<div class="tickets-list">
-				{#each $bookingSummary.tickets as ticket}
-					<div class="ticket-item">
-						<span>{ticket.quantity}x {ticket.type.name_translations?.en || 'Ticket'}</span>
-						<span class="font-medium">€{ticket.subtotal.toFixed(2)}</span>
-					</div>
-				{/each}
+	<div class="space-y-4">
+		<!-- Date Summary -->
+		{#if $bookingSummary.date}
+			<div class="summary-item">
+				<header>
+					<Calendar class="icon-primary" />
+					<span>Visit Date</span>
+				</header>
+				<p>
+					{$bookingSummary.date.toLocaleDateString('en-GB', {
+						weekday: 'long',
+						year: 'numeric',
+						month: 'long',
+						day: 'numeric'
+					})}
+				</p>
 			</div>
-		</div>
-	{/if}
+		{/if}
+
+		<!-- Tickets Summary -->
+		{#if $bookingSummary.tickets.length > 0}
+			<div class="summary-item">
+				<header>
+					<Ticket class="icon-primary" />
+					<span>Selected Ticket</span>
+				</header>
+				<div class="tickets-list">
+					{#each $bookingSummary.tickets as ticket (ticket.type.id)}
+						<div class="ticket-item">
+							<span>{ticket.quantity}x {ticket.type.name_translations?.en ?? 'Ticket'}</span>
+							<span class="font-medium">€{ticket.subtotal.toFixed(2)}</span>
+						</div>
+					{/each}
+				</div>
+			</div>
+		{/if}
+
+		<!-- Time Slot Summary -->
+		{#if $bookingSummary.timeSlot}
+			<div class="summary-item">
+				<header>
+					<Clock class="icon-primary" />
+					<span>Time Slot</span>
+				</header>
+				<p>
+					{new Date($bookingSummary.timeSlot.start_time).toLocaleTimeString('en-GB', {
+						hour: '2-digit',
+						minute: '2-digit'
+					})}
+					-
+					{new Date($bookingSummary.timeSlot.end_time).toLocaleTimeString('en-GB', {
+						hour: '2-digit',
+						minute: '2-digit'
+					})}
+				</p>
+			</div>
+		{/if}
+	</div>
 
 	<!-- Total Price -->
-	{#if $totalPrice > 0}
+	{#if $bookingSummary.totalPrice > 0}
 		<div class="summary-total">
 			<span>Total</span>
-			<span class="price">€{$totalPrice.toFixed(2)}</span>
+			<span class="price">€{$bookingSummary.totalPrice.toFixed(2)}</span>
 		</div>
 	{/if}
 
 	<!-- Action Buttons -->
 	<div class="action-buttons">
-		{#if currentStep < 4}
-			<button
-				type="button"
-				class="btn btn-primary"
-				onclick={nextStep}
-				disabled={!isStepAccessible(currentStep + 1)}
-			>
-				<span>Continue</span>
-				<ArrowRight class="icon" />
-			</button>
-		{:else if currentStep === 4}
+		{#if currentStep === 4}
 			<button
 				type="button"
 				class="btn btn-primary"
@@ -157,32 +134,29 @@
 			>
 				{#if $isCreatingBooking}
 					<Loader2 class="icon animate-spin" />
-					<span>Creating Booking...</span>
+					<span>Securing Your Booking...</span>
 				{:else}
 					<CreditCard class="icon" />
 					<span>Proceed to Payment</span>
 				{/if}
 			</button>
+		{:else}
+			<div class="text-muted-foreground bg-muted rounded-md p-4 text-center text-sm">
+				Complete all steps to proceed to payment.
+			</div>
 		{/if}
 
 		{#if currentStep > 1}
-			<button type="button" class="btn btn-secondary" onclick={previousStep}>
-				<ArrowLeft class="icon" />
-				<span>Back</span>
+			<button type="button" class="btn btn-outline" onclick={startOver}>
+				<RotateCcw class="icon" />
+				<span>Start Over</span>
 			</button>
-		{/if}
-
-		{#if currentStep > 1}
-			<button type="button" class="btn btn-outline" onclick={startOver}>Start Over</button>
 		{/if}
 	</div>
 </div>
 
 <style>
-	/* --- SUMMARY SIDEBAR --- */
 	.summary-card {
-		position: sticky;
-		top: 1rem;
 		background-color: var(--card);
 		color: var(--card-foreground);
 		border: 1px solid var(--border);
@@ -195,19 +169,19 @@
 	.summary-title {
 		font-size: 1.25rem;
 		font-weight: 600;
-		margin-bottom: 1rem;
+		margin-bottom: 1.5rem;
 	}
 	.summary-placeholder {
 		color: var(--muted-foreground);
-		font-style: italic;
 		text-align: center;
-		padding: 2rem 0;
+		padding: 2rem 1rem;
+		border: 2px dashed var(--border);
+		border-radius: var(--radius);
 	}
 	.summary-item {
 		background-color: var(--muted);
-		padding: 0.75rem;
+		padding: 0.75rem 1rem;
 		border-radius: var(--radius);
-		margin-bottom: 1rem;
 	}
 	.summary-item header {
 		display: flex;
@@ -216,30 +190,26 @@
 		font-size: 0.875rem;
 		font-weight: 500;
 		color: var(--muted-foreground);
-		margin-bottom: 0.25rem;
+		margin-bottom: 0.5rem;
 	}
 	.summary-item p,
-	.summary-item .ticket-item {
+	.ticket-item {
 		color: var(--card-foreground);
-	}
-	.tickets-list {
-		display: flex;
-		flex-direction: column;
-		gap: 0.25rem;
+		font-weight: 500;
 	}
 	.ticket-item {
 		display: flex;
 		justify-content: space-between;
-		font-size: 0.875rem;
+		font-size: 0.9rem;
 	}
 	.summary-total {
 		display: flex;
 		justify-content: space-between;
 		align-items: baseline;
 		padding: 1rem;
-		margin-bottom: 1.5rem;
-		background-color: hsla(var(--primary), 0.1);
+		margin-top: 1.5rem;
 		border: 1px solid hsla(var(--primary), 0.2);
+		background-color: hsla(var(--primary), 0.05);
 		border-radius: var(--radius);
 		color: var(--primary);
 	}
@@ -251,15 +221,14 @@
 		font-size: 1.5rem;
 		font-weight: 700;
 	}
-
-	/* --- BUTTONS --- */
 	.action-buttons {
+		margin-top: 1.5rem;
 		display: flex;
 		flex-direction: column;
 		gap: 0.75rem;
 	}
 	.btn {
-		display: flex;
+		display: inline-flex;
 		align-items: center;
 		justify-content: center;
 		gap: 0.5rem;
@@ -269,6 +238,7 @@
 		border: 1px solid transparent;
 		cursor: pointer;
 		transition: all 0.2s ease-in-out;
+		width: 100%;
 	}
 	.btn:focus-visible {
 		outline: 2px solid var(--ring);
@@ -289,13 +259,6 @@
 	.btn-primary:not(:disabled):hover {
 		filter: brightness(1.1);
 	}
-	.btn-secondary {
-		background-color: var(--secondary);
-		color: var(--secondary-foreground);
-	}
-	.btn-secondary:not(:disabled):hover {
-		filter: brightness(1.1);
-	}
 	.btn-outline {
 		background-color: transparent;
 		color: var(--foreground);
@@ -304,12 +267,13 @@
 	.btn-outline:not(:disabled):hover {
 		background-color: var(--muted);
 	}
-
-	/* --- ICONS & ANIMATIONS --- */
 	.icon-primary {
 		color: var(--primary);
 		width: 1.25rem;
 		height: 1.25rem;
+	}
+	.animate-spin {
+		animation: spin 1s linear infinite;
 	}
 	@keyframes spin {
 		from {
@@ -318,8 +282,5 @@
 		to {
 			transform: rotate(360deg);
 		}
-	}
-	.animate-spin {
-		animation: spin 1s linear infinite;
 	}
 </style>

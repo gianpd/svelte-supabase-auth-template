@@ -205,9 +205,11 @@ const authHandle: Handle = async ({ event, resolve }) => {
     // SvelteKit automatically passes `event.locals.session` and `event.locals.user`
     // to the root layout data via the `+layout.server.ts` load function.
     return resolve(event, {
-        filterSerializedResponseHeaders(name) {
+        filterSerializedResponseHeaders: (name) => name.toLowerCase() === 'content-type',
+        /*filterSerializedResponseHeaders(name) {
             return name === 'content-range' || name === 'x-supabase-api-version';
         }
+            */
     });
 };
 

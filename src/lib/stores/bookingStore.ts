@@ -2,30 +2,27 @@
  * @file Booking Store - Centralized state management for the booking process
  * @description 
  * Manages the entire booking flow state using Svelte stores.
- * Provides reactive state for date selection, time slots, ticket types, and pricing.
- * 
- * Key features:
- * - Centralized booking state management
- * - Reactive price calculations
- * - Loading and error state handling
- * - Form validation helpers
- * - Reset functionality for new bookings
+ * Provides reactive state for date, time, ticket, and pricing.
+ * This version is refactored for simplicity and robustness, enforcing a single ticket type per booking
+ * to align with the backend API and simplify the user flow.
  * 
  * @dependencies
- * - Svelte: For reactive stores and state management
- * - apiClient: For fetching ticket types and availability data
- * 
+ * - Svelte: For reactive stores and state management.
+ * - apiClient: For fetching ticket types and availability data.
+ *
  * @notes
- * - Uses writable stores for mutable state
- * - Derived stores for computed values like total price
- * - Includes helper functions for common booking operations
- * - Handles both guest and authenticated user bookings
+ * - Enforces a single ticket type selection model for clarity and API compatibility.
+ * - Time slots are now loaded on-demand after a date and ticket type have been selected.
+ * - State is reset hierarchically (e.g., changing date clears tickets and time) to ensure consistency.
+ * - The export 'selectedTicketTypes' has been removed and replaced with 'selectedTicket'.
  */
 
 import { writable, derived, get, type Writable, type Readable } from 'svelte/store';
 import { apiClient } from '$lib/api/apiClient';
 
-// Type definitions
+// --- TYPE DEFINITIONS ---
+
+/** Represents a ticket type available for booking. */
 export interface TicketType {
     id: string;
     price: number;
@@ -33,18 +30,27 @@ export interface TicketType {
     [key: string]: any;
 }
 
+/** Represents an available time slot for a booking. */
 export interface TimeSlot {
     id: string;
     available_slots: number;
     [key: string]: any;
 }
 
+/** Represents the currently selected ticket and its quantity. */
+export interface SelectedTicket {
+    id: string;
+    quantity: number;
+}
+
+/** Represents customer details for guest bookings. */
 export interface CustomerInfo {
     name: string;
     email: string;
     isGuest: boolean;
 }
 
+/** A map of validation error messages for the booking form. */
 interface ValidationErrors {
     [key: string]: string | undefined;
     date?: string;
@@ -55,12 +61,14 @@ interface ValidationErrors {
     capacity?: string;
 }
 
+/** A summary of a single ticket line item in the booking. */
 interface TicketSummary {
     type: TicketType;
     quantity: number;
     subtotal: number;
 }
 
+/** A comprehensive summary of the entire current booking state. */
 interface BookingSummary {
     date: Date | null;
     timeSlot: TimeSlot | null;
@@ -70,6 +78,7 @@ interface BookingSummary {
     isComplete: boolean;
 }
 
+/** Data structure for the booking creation API payload. */
 interface BookingData {
     booking_date: string;
     time_slot_id: string;
@@ -81,76 +90,64 @@ interface BookingData {
     source: string;
 }
 
-// Core booking state
+// --- CORE BOOKING STATE ---
+
 export const selectedDate: Writable<Date | null> = writable(null);
 export const selectedTimeSlot: Writable<TimeSlot | null> = writable(null);
-export const selectedTicketTypes: Writable<Map<string, number>> = writable(new Map());
+// REFACTORED: Store a single selected ticket object instead of a Map to simplify logic and align with the backend API.
+export const selectedTicket: Writable<SelectedTicket | null> = writable(null);
 export const availableTicketTypes: Writable<TicketType[]> = writable([]);
 export const availableTimeSlots: Writable<TimeSlot[]> = writable([]);
 
-// Customer information for guest bookings
 export const customerInfo: Writable<CustomerInfo> = writable({
     name: '',
     email: '',
     isGuest: true
 });
 
-// Loading and error states
+// --- LOADING AND ERROR STATES ---
+
 export const isLoadingTicketTypes: Writable<boolean> = writable(false);
 export const isLoadingTimeSlots: Writable<boolean> = writable(false);
 export const isCreatingBooking: Writable<boolean> = writable(false);
 export const bookingError: Writable<string | null> = writable(null);
 export const validationErrors: Writable<ValidationErrors> = writable({});
 
-// Derived store for total price calculation
+// --- DERIVED STORES FOR COMPUTED VALUES ---
+
+/** Calculates the total price based on the selected ticket and quantity. */
 export const totalPrice: Readable<number> = derived(
-    [selectedTicketTypes, availableTicketTypes],
-    ([$selectedTicketTypes, $availableTicketTypes]: [Map<string, number>, TicketType[]]) => {
-        let total = 0;
+    [selectedTicket, availableTicketTypes],
+    ([$selectedTicket, $availableTicketTypes]) => {
+        if (!$selectedTicket) return 0;
 
-        for (const [ticketTypeId, quantity] of $selectedTicketTypes) {
-            const ticketType = $availableTicketTypes.find(tt => tt.id === ticketTypeId);
-            if (ticketType && quantity > 0) {
-                total += ticketType.price * quantity;
-            }
+        const ticketType = $availableTicketTypes.find(tt => tt.id === $selectedTicket.id);
+        if (ticketType) {
+            return ticketType.price * $selectedTicket.quantity;
         }
-
-        return total;
+        return 0;
     }
 );
 
-// Derived store for total ticket count
+/** Calculates the total number of tickets selected. */
 export const totalTickets: Readable<number> = derived(
-    selectedTicketTypes,
-    ($selectedTicketTypes: Map<string, number>) => {
-        let total = 0;
-        for (const quantity of $selectedTicketTypes.values()) {
-            total += quantity;
-        }
-        return total;
-    }
+    selectedTicket,
+    ($selectedTicket) => $selectedTicket?.quantity ?? 0
 );
 
-// Derived store for booking summary
+/** Creates a comprehensive summary of the current booking for display. */
 export const bookingSummary: Readable<BookingSummary> = derived(
-    [selectedDate, selectedTimeSlot, selectedTicketTypes, availableTicketTypes, totalPrice, totalTickets],
-    ([$selectedDate, $selectedTimeSlot, $selectedTicketTypes, $availableTicketTypes, $totalPrice, $totalTickets]: [
-        Date | null,
-        TimeSlot | null,
-        Map<string, number>,
-        TicketType[],
-        number,
-        number
-    ]) => {
+    [selectedDate, selectedTimeSlot, selectedTicket, availableTicketTypes, totalPrice, totalTickets],
+    ([$selectedDate, $selectedTimeSlot, $selectedTicket, $availableTicketTypes, $totalPrice, $totalTickets]) => {
         const tickets: TicketSummary[] = [];
 
-        for (const [ticketTypeId, quantity] of $selectedTicketTypes) {
-            const ticketType = $availableTicketTypes.find(tt => tt.id === ticketTypeId);
-            if (ticketType && quantity > 0) {
+        if ($selectedTicket) {
+            const ticketType = $availableTicketTypes.find(tt => tt.id === $selectedTicket.id);
+            if (ticketType && $selectedTicket.quantity > 0) {
                 tickets.push({
                     type: ticketType,
-                    quantity,
-                    subtotal: ticketType.price * quantity
+                    quantity: $selectedTicket.quantity,
+                    subtotal: ticketType.price * $selectedTicket.quantity
                 });
             }
         }
@@ -166,20 +163,20 @@ export const bookingSummary: Readable<BookingSummary> = derived(
     }
 );
 
-// Helper functions for booking operations
+// --- BOOKING ACTIONS ---
+
 export const bookingActions = {
     /**
-     * Loads available ticket types from the API
-     * @param customFetch - Optional custom fetch function for SSR
+     * Loads all available ticket types from the API.
+     * @param {typeof fetch} [customFetch=fetch] - Optional custom fetch for SSR.
      */
     async loadTicketTypes(customFetch: typeof fetch = fetch): Promise<void> {
         isLoadingTicketTypes.set(true);
         bookingError.set(null);
-
         try {
             const ticketTypes: TicketType[] = await apiClient.getTicketTypes(customFetch);
             availableTicketTypes.set(ticketTypes);
-        } catch (error: unknown) {
+        } catch (error) {
             console.error('Failed to load ticket types:', error);
             bookingError.set('Unable to load ticket types. Please try again.');
         } finally {
@@ -188,30 +185,31 @@ export const bookingActions = {
     },
 
     /**
-     * Loads available time slots for a specific date and ticket type
-     * @param ticketTypeId - The ticket type ID
-     * @param date - Date in YYYY-MM-DD format
-     * @param customFetch - Optional custom fetch function for SSR
+     * Loads available time slots based on the current date and ticket selection.
+     * This should be called from the UI when ready to select a time.
+     * @param {typeof fetch} [customFetch=fetch] - Optional custom fetch for SSR.
      */
-    async loadTimeSlots(ticketTypeId: string, date: string, customFetch: typeof fetch = fetch): Promise<void> {
-        if (!ticketTypeId || !date) {
+    async loadTimeSlotsForSelection(customFetch: typeof fetch = fetch): Promise<void> {
+        const date = get(selectedDate);
+        const ticket = get(selectedTicket);
+
+        if (!date || !ticket) {
             availableTimeSlots.set([]);
             return;
         }
 
         isLoadingTimeSlots.set(true);
         bookingError.set(null);
-
         try {
-            const timeSlots: TimeSlot[] = await apiClient.getTimeSlots(ticketTypeId, date, customFetch);
+            const dateString = date.toISOString().split('T')[0];
+            const timeSlots: TimeSlot[] = await apiClient.getTimeSlots(ticket.id, dateString, customFetch);
             availableTimeSlots.set(timeSlots);
 
-            // Clear selected time slot if it's no longer available
-            const currentSlot: TimeSlot | null = get(selectedTimeSlot);
+            const currentSlot = get(selectedTimeSlot);
             if (currentSlot && !timeSlots.find(slot => slot.id === currentSlot.id)) {
                 selectedTimeSlot.set(null);
             }
-        } catch (error: unknown) {
+        } catch (error) {
             console.error('Failed to load time slots:', error);
             bookingError.set('Unable to load available time slots. Please try again.');
             availableTimeSlots.set([]);
@@ -221,119 +219,75 @@ export const bookingActions = {
     },
 
     /**
-     * Updates the quantity for a specific ticket type
-     * @param ticketTypeId - The ticket type ID
-     * @param quantity - New quantity (0 to remove)
+     * Updates the selected ticket type and quantity. Replaces any existing selection.
+     * @param {string} ticketTypeId - The ID of the ticket type.
+     * @param {number} quantity - The new quantity.
      */
     updateTicketQuantity(ticketTypeId: string, quantity: number): void {
-        selectedTicketTypes.update(current => {
-            const updated = new Map(current);
-
-            if (quantity <= 0) {
-                updated.delete(ticketTypeId);
-            } else {
-                updated.set(ticketTypeId, quantity);
-            }
-
-            return updated;
-        });
-
-        // Clear validation errors when user makes changes
-        validationErrors.update(current => {
-            const updated: ValidationErrors = { ...current };
-            delete updated.tickets;
-            return updated;
-        });
-    },
-
-    /**
-     * Sets the selected date and triggers time slot loading
-     * @param date - Selected date
-     */
-    async setSelectedDate(date: Date): Promise<void> {
-        selectedDate.set(date);
-        selectedTimeSlot.set(null); // Clear time slot when date changes
-
-        // Load time slots for the first available ticket type
-        const ticketTypes: TicketType[] = get(availableTicketTypes);
-        if (ticketTypes.length > 0 && date) {
-            const dateString = date.toISOString().split('T')[0];
-            await this.loadTimeSlots(ticketTypes[0].id, dateString);
+        if (quantity > 0) {
+            selectedTicket.set({ id: ticketTypeId, quantity });
+        } else {
+            selectedTicket.set(null);
         }
+
+        // When tickets change, a previously selected time slot might become invalid.
+        // Resetting it is the safest approach to force re-selection.
+        selectedTimeSlot.set(null);
+
+        validationErrors.update(current => ({ ...current, tickets: undefined, capacity: undefined }));
     },
 
     /**
-     * Sets the selected time slot
-     * @param timeSlot - Selected time slot object
+     * Sets the selected date and clears dependent state (tickets and time slot).
+     * @param {Date} date - The selected date.
+     */
+    setSelectedDate(date: Date): void {
+        selectedDate.set(date);
+        // Reset subsequent selections to ensure a clean state.
+        selectedTicket.set(null);
+        selectedTimeSlot.set(null);
+        availableTimeSlots.set([]);
+        validationErrors.update(current => ({ ...current, date: undefined }));
+    },
+
+    /**
+     * Sets the selected time slot.
+     * @param {TimeSlot} timeSlot - The selected time slot object.
      */
     setSelectedTimeSlot(timeSlot: TimeSlot): void {
         selectedTimeSlot.set(timeSlot);
-
-        // Clear validation errors when user makes changes
-        validationErrors.update(current => {
-            const updated: ValidationErrors = { ...current };
-            delete updated.timeSlot;
-            return updated;
-        });
+        validationErrors.update(current => ({ ...current, timeSlot: undefined, capacity: undefined }));
     },
 
     /**
-     * Updates customer information for guest bookings
-     * @param info - Customer information object
+     * Updates customer information for guest bookings.
+     * @param {Partial<CustomerInfo>} info - Partial customer information.
      */
     updateCustomerInfo(info: Partial<CustomerInfo>): void {
         customerInfo.update(current => ({ ...current, ...info }));
-
-        // Clear validation errors when user makes changes
-        validationErrors.update(current => {
-            const updated: ValidationErrors = { ...current };
-            delete updated.name;
-            delete updated.email;
-            return updated;
-        });
+        validationErrors.update(current => ({ ...current, name: undefined, email: undefined }));
     },
 
     /**
-     * Validates the current booking state
-     * @returns True if booking is valid
+     * Validates the entire booking state before proceeding to payment.
+     * @returns {boolean} - True if the booking is valid.
      */
     validateBooking(): boolean {
         const errors: ValidationErrors = {};
-        const currentDate: Date | null = get(selectedDate);
-        const currentTimeSlot: TimeSlot | null = get(selectedTimeSlot);
-        const currentTickets: Map<string, number> = get(selectedTicketTypes);
-        const currentCustomer: CustomerInfo = get(customerInfo);
-        const currentTotalTickets: number = get(totalTickets);
+        const summary = get(bookingSummary);
+        const customer = get(customerInfo);
 
-        // Validate date selection
-        if (!currentDate) {
-            errors.date = 'Please select a visit date';
+        if (!summary.date) errors.date = 'Please select a visit date';
+        if (summary.totalTickets === 0) errors.tickets = 'Please select a ticket';
+        if (!summary.timeSlot) errors.timeSlot = 'Please select a time slot';
+
+        if (customer.isGuest) {
+            if (!customer.name || customer.name.trim().length < 2) errors.name = 'Please enter a valid name';
+            if (!customer.email || !customer.email.includes('@')) errors.email = 'Please enter a valid email address';
         }
 
-        // Validate time slot selection
-        if (!currentTimeSlot) {
-            errors.timeSlot = 'Please select a time slot';
-        }
-
-        // Validate ticket selection
-        if (currentTotalTickets === 0) {
-            errors.tickets = 'Please select at least one ticket';
-        }
-
-        // Validate customer information for guest bookings
-        if (currentCustomer.isGuest) {
-            if (!currentCustomer.name || currentCustomer.name.trim().length < 2) {
-                errors.name = 'Please enter a valid name';
-            }
-
-            if (!currentCustomer.email || !currentCustomer.email.includes('@')) {
-                errors.email = 'Please enter a valid email address';
-            }
-        }
-
-        // Validate time slot capacity
-        if (currentTimeSlot && currentTotalTickets > currentTimeSlot.available_slots) {
-            errors.capacity = `Only ${currentTimeSlot.available_slots} tickets available for this time slot`;
+        if (summary.timeSlot && summary.totalTickets > summary.timeSlot.available_slots) {
+            errors.capacity = `Only ${summary.timeSlot.available_slots} tickets are available for this slot.`;
         }
 
         validationErrors.set(errors);
@@ -341,28 +295,28 @@ export const bookingActions = {
     },
 
     /**
-     * Creates a booking with the current state
-     * @param customFetch - Optional custom fetch function
-     * @returns Created booking object
+     * Creates a booking with the current state.
+     * @param {typeof fetch} [customFetch=fetch] - Optional custom fetch for SSR.
+     * @returns {Promise<any>} - The created booking object from the API.
      */
     async createBooking(customFetch: typeof fetch = fetch): Promise<any> {
         if (!this.validateBooking()) {
-            throw new Error('Please correct the validation errors');
+            throw new Error('Please correct the validation errors before proceeding.');
         }
 
         isCreatingBooking.set(true);
         bookingError.set(null);
 
         try {
-            const summary: BookingSummary = get(bookingSummary);
-            const customer: CustomerInfo = get(customerInfo);
+            const summary = get(bookingSummary);
+            const customer = get(customerInfo);
+            const ticketInfo = summary.tickets[0];
 
-            // Prepare booking data for API
             const bookingData: BookingData = {
                 booking_date: summary.date!.toISOString().split('T')[0],
                 time_slot_id: summary.timeSlot!.id,
-                ticket_type_id: summary.tickets[0].type.id,
-                quantity: summary.totalTickets,
+                ticket_type_id: ticketInfo.type.id,
+                quantity: ticketInfo.quantity,
                 total_price: summary.totalPrice,
                 customer_name: customer.isGuest ? customer.name : null,
                 customer_email: customer.isGuest ? customer.email : null,
@@ -370,14 +324,11 @@ export const bookingActions = {
             };
 
             const booking = await apiClient.createBooking(bookingData, customFetch);
-
-            // Reset booking state after successful creation
             this.resetBooking();
-
             return booking;
-        } catch (error: unknown) {
+        } catch (error) {
             console.error('Failed to create booking:', error);
-            bookingError.set('Failed to create booking. Please try again.');
+            bookingError.set('An error occurred while creating your booking. Please try again.');
             throw error;
         } finally {
             isCreatingBooking.set(false);
@@ -385,28 +336,23 @@ export const bookingActions = {
     },
 
     /**
-     * Resets all booking state to initial values
+     * Resets all booking state to initial values for a new booking.
      */
     resetBooking(): void {
         selectedDate.set(null);
         selectedTimeSlot.set(null);
-        selectedTicketTypes.set(new Map());
+        selectedTicket.set(null);
         availableTimeSlots.set([]);
-        customerInfo.set({
-            name: '',
-            email: '',
-            isGuest: true
-        });
+        customerInfo.set({ name: '', email: '', isGuest: true });
         bookingError.set(null);
         validationErrors.set({});
     },
 
     /**
-     * Clears all error states
+     * Clears all error states from the store.
      */
     clearErrors(): void {
         bookingError.set(null);
         validationErrors.set({});
     }
 };
-

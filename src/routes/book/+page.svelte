@@ -1,33 +1,43 @@
 <script lang="ts">
+	/**
+	 * @file Booking Page
+	 * @purpose Provides a multi-step user interface for booking museum tickets.
+	 *
+	 * @dependencies
+	 * - Svelte: For component logic and reactivity.
+	 * - SvelteKit: For navigation (`goto`) and page state (`page`).
+	 * - bookingStore: For all booking-related state and actions.
+	 * - lucide-svelte: For icons.
+	 *
+	 * @notes
+	 * - This component has been refactored to use a more logical step order: Date -> Tickets -> Time -> Details.
+	 * - Automatic step advancement has been removed to improve user control and fix navigation issues.
+	 * - Time slots are now loaded on-demand when the user reaches the time selection step.
+	 * - The UI is composed of several child components for each step of the booking process.
+	 */
 	import { goto } from '$app/navigation';
-	import { page } from '$app/stores';
-	import { onMount } from 'svelte';
-	import { fade, slide, scale } from 'svelte/transition';
-	import { quintOut } from 'svelte/easing';
+	import { page } from '$app/state';
+	import { fade, slide } from 'svelte/transition';
 
 	import {
 		bookingActions,
 		bookingError,
-		bookingSummary,
 		customerInfo,
 		isCreatingBooking,
+		isLoadingTimeSlots,
 		selectedDate,
 		selectedTimeSlot,
-		totalPrice,
 		totalTickets,
 		validationErrors
 	} from '$lib/stores/bookingStore';
 
-	// Dynamic imports - proper syntax
+	// Component Imports
 	import Calendar from '$lib/components/Calendar.svelte';
 	import TimeSlotPicker from '$lib/components/TimeSlotPicker.svelte';
 	import TicketSelector from '$lib/components/TicketSelector.svelte';
-	import ProgressSteps from './_components/ProgressSteps.svelte';
 	import BookingSummary from './_components/BookingSummary.svelte';
 	import CustomerForm from './_components/CustomerForm.svelte';
-	import StepContent from './_components/StepContent.svelte';
 	import Alert from '$lib/components/ui/Alert.svelte';
-	import { LoaderIcon } from 'lucide-svelte';
 
 	import {
 		Loader,
@@ -36,427 +46,301 @@
 		Calendar as CalendarIcon,
 		Clock,
 		Ticket,
-		User
+		User,
+		Check
 	} from 'lucide-svelte';
 
-	// Types
 	interface BookingStep {
 		id: number;
 		title: string;
 		description: string;
 		icon: any;
-		isComplete: boolean;
-		isActive: boolean;
+		isComplete: () => boolean;
 	}
 
-	// State management
+	// --- STATE MANAGEMENT ---
+
 	let currentStep = $state(1);
-	let showCustomerForm = $state(false);
-	let isLoading = $state(false);
-	let hasError = $state(false);
-	let retryCount = $state(0);
 
-	// Derived state with better logic
-	const canProceedToStep2 = $derived($selectedDate !== null);
-	const canProceedToStep3 = $derived(canProceedToStep2 && $selectedTimeSlot !== null);
-	const canProceedToStep4 = $derived(canProceedToStep3 && $totalTickets > 0);
-	const canCompleteBooking = $derived(canProceedToStep4 && $customerInfo?.isValid);
+	// --- DERIVED STATE ---
 
-	// Dynamic steps configuration
-	const steps = $derived<BookingStep[]>([
+	const isCustomerFormValid = $derived(
+		!$validationErrors.name &&
+			!$validationErrors.email &&
+			!!$customerInfo.name &&
+			!!$customerInfo.email
+	);
+
+	// REFACTORED: The step order is now Date -> Tickets -> Time -> Details for a logical data flow.
+	const steps: BookingStep[] = [
 		{
 			id: 1,
 			title: 'Select Date',
-			description: 'Choose your preferred visit date',
+			description: 'Choose your visit date',
 			icon: CalendarIcon,
-			isComplete: canProceedToStep2,
-			isActive: currentStep === 1
+			isComplete: () => $selectedDate !== null
 		},
 		{
 			id: 2,
-			title: 'Choose Time',
-			description: 'Pick your ideal time slot',
-			icon: Clock,
-			isComplete: canProceedToStep3,
-			isActive: currentStep === 2
+			title: 'Select Tickets',
+			description: 'Choose your ticket type',
+			icon: Ticket,
+			isComplete: () => $totalTickets > 0
 		},
 		{
 			id: 3,
-			title: 'Select Tickets',
-			description: 'Choose ticket types and quantities',
-			icon: Ticket,
-			isComplete: canProceedToStep4,
-			isActive: currentStep === 3
+			title: 'Choose Time',
+			description: 'Pick your time slot',
+			icon: Clock,
+			isComplete: () => $selectedTimeSlot !== null
 		},
 		{
 			id: 4,
 			title: 'Your Details',
-			description: 'Provide contact information',
+			description: 'Provide your contact info',
 			icon: User,
-			isComplete: canCompleteBooking,
-			isActive: currentStep === 4
+			isComplete: () => isCustomerFormValid
 		}
-	]);
+	];
 
-	// Auto-advance logic with improved UX
+	// --- EFFECTS ---
+
 	$effect(() => {
-		if ($selectedDate && currentStep === 1) {
-			const timer = setTimeout(() => {
-				if (currentStep === 1) {
-					currentStep = 2;
-				}
-			}, 800); // Slightly longer for better UX
-
-			return () => clearTimeout(timer);
+		// When moving to step 3 (time selection), fetch the available time slots.
+		// This ensures we always have fresh data based on the selected date and ticket type.
+		if (currentStep === 3) {
+			bookingActions.loadTimeSlotsForSelection();
 		}
 	});
 
 	$effect(() => {
-		if ($selectedTimeSlot && currentStep === 2) {
-			const timer = setTimeout(() => {
-				if (currentStep === 2) {
-					currentStep = 3;
-				}
-			}, 800);
-
-			return () => clearTimeout(timer);
+		// Clear general booking errors when the user makes a selection,
+		// as this indicates they are trying to correct the issue.
+		if ($selectedDate || $selectedTimeSlot || $totalTickets) {
+			bookingError.set(null);
 		}
 	});
 
-	$effect(() => {
-		showCustomerForm = $totalTickets > 0 && currentStep >= 3;
+	// --- NAVIGATION ---
 
-		// Auto-advance to customer form when tickets are selected
-		if ($totalTickets > 0 && currentStep === 3) {
-			const timer = setTimeout(() => {
-				if (currentStep === 3) {
-					currentStep = 4;
-				}
-			}, 1200);
-
-			return () => clearTimeout(timer);
+	/**
+	 * Checks if a given step can be accessed based on the completion of previous steps.
+	 * @param {number} stepId The ID of the step to check.
+	 * @returns {boolean} True if the step is accessible.
+	 */
+	function isStepAccessible(stepId: number): boolean {
+		for (let i = 1; i < stepId; i++) {
+			const step = steps.find((s) => s.id === i);
+			if (!step || !step.isComplete()) {
+				return false;
+			}
 		}
-	});
+		return true;
+	}
 
-	// Navigation functions
-	function goToStep(step: number): void {
-		if (step < 1 || step > 4) return;
-
-		// Validate if user can go to this step
-		if (step === 2 && !canProceedToStep2) return;
-		if (step === 3 && !canProceedToStep3) return;
-		if (step === 4 && !canProceedToStep4) return;
-
-		currentStep = step;
+	function goToStep(stepId: number): void {
+		if (isStepAccessible(stepId)) {
+			currentStep = stepId;
+		}
 	}
 
 	function goToPreviousStep(): void {
 		if (currentStep > 1) {
-			currentStep = currentStep - 1;
+			currentStep--;
 		}
 	}
 
 	function goToNextStep(): void {
-		if (currentStep < 4) {
-			const canProceed =
-				currentStep === 1
-					? canProceedToStep2
-					: currentStep === 2
-						? canProceedToStep3
-						: currentStep === 3
-							? canProceedToStep4
-							: false;
-
-			if (canProceed) {
-				currentStep = currentStep + 1;
-			}
+		const currentStepIndex = steps.findIndex((s) => s.id === currentStep);
+		if (currentStepIndex < steps.length - 1 && steps[currentStepIndex].isComplete()) {
+			currentStep++;
 		}
 	}
 
-	// Enhanced booking completion
+	// --- BOOKING SUBMISSION ---
+
 	async function handleProceedToPayment(): Promise<void> {
-		if (!canCompleteBooking) {
-			hasError = true;
+		if (!bookingActions.validateBooking()) {
+			// Errors will be displayed reactively from the store.
 			return;
 		}
 
-		isLoading = true;
-		hasError = false;
-
 		try {
-			// Validate all data one more time
-			if (!bookingActions.validateBooking()) {
-				throw new Error('Booking validation failed');
-			}
-
 			const booking = await bookingActions.createBooking();
-
-			if (!booking?.id) {
-				throw new Error('Invalid booking response');
+			if (booking?.id) {
+				// On success, navigate to the checkout page with the booking ID.
+				await goto(`/checkout?booking=${booking.id}&step=payment`);
+			} else {
+				throw new Error('Invalid booking response from server.');
 			}
-
-			// Add success analytics/tracking here
-			await goto(`/checkout?booking=${booking.id}&step=payment`, {
-				replaceState: false
-			});
 		} catch (error) {
 			console.error('Booking creation failed:', error);
-			hasError = true;
-			retryCount += 1;
-
-			// Show user-friendly error message
-			if (retryCount < 3) {
-				// Auto-retry logic for transient errors
-				setTimeout(() => {
-					if (retryCount < 3) {
-						handleProceedToPayment();
-					}
-				}, 2000);
-			}
-		} finally {
-			isLoading = false;
+			// Error is set in the store and will be displayed by the Alert component.
 		}
 	}
-
-	// Reset error state when user makes changes
-	$effect(() => {
-		if ($selectedDate || $selectedTimeSlot || $totalTickets) {
-			hasError = false;
-		}
-	});
-
-	// Keyboard navigation
-	function handleKeydown(event: KeyboardEvent): void {
-		if (event.key === 'ArrowLeft' && currentStep > 1) {
-			goToPreviousStep();
-		} else if (event.key === 'ArrowRight' && currentStep < 4) {
-			goToNextStep();
-		}
-	}
-
-	onMount(() => {
-		// Add keyboard listener
-		document.addEventListener('keydown', handleKeydown);
-
-		// Preload next step components for better performance
-		if (currentStep < 4) {
-			// Preload logic here if needed
-		}
-
-		return () => {
-			document.removeEventListener('keydown', handleKeydown);
-		};
-	});
 </script>
 
 <svelte:head>
-	<title>Book Your Visit - Zungri Museum | Southern Italian Heritage Experience</title>
+	<title>Book Your Visit - Zungri Museum | Southern Italian Heritage</title>
 	<meta
 		name="description"
-		content="Reserve your tickets for an immersive journey through Southern Italian culture and heritage at Zungri Museum. Choose from guided tours, workshops, and special exhibitions."
+		content="Reserve your tickets for an immersive journey through Southern Italian culture and heritage at Zungri Museum. Choose your date, tickets, and time."
 	/>
 	<meta
 		name="keywords"
-		content="Zungri Museum, Southern Italy, cultural heritage, museum tickets, guided tours"
+		content="Zungri Museum, book tickets, Southern Italy, cultural heritage, museum tickets"
 	/>
-	<meta property="og:title" content="Book Your Visit - Zungri Museum" />
-	<meta
-		property="og:description"
-		content="Experience the rich heritage of Southern Italy. Book your museum visit today."
-	/>
-	<meta property="og:type" content="website" />
-	<link rel="canonical" href={$page.url.href} />
+	<link rel="canonical" href={page.url.href} />
 </svelte:head>
 
 <main class="from-background via-cream-50 to-primary-50 min-h-screen bg-gradient-to-br">
-	<div class="container mx-auto max-w-7xl px-4 py-8">
+	<div class="container mx-auto max-w-7xl px-4 py-8 sm:py-12">
 		<!-- Header Section -->
 		<header class="mb-12 text-center">
-			<div
-				class="bg-primary-100 mb-6 inline-flex h-16 w-16 items-center justify-center rounded-full"
-				in:scale={{ duration: 600, easing: quintOut }}
-			>
-				<CalendarIcon class="text-primary-600 h-8 w-8" />
-			</div>
-
 			<h1
-				class="font-display mb-4 text-5xl font-bold text-neutral-900 md:text-6xl"
+				class="font-display mb-4 text-4xl font-bold text-neutral-900 md:text-5xl"
 				in:fade={{ duration: 800, delay: 200 }}
 			>
 				Book Your Visit
 			</h1>
-
 			<p
-				class="font-body mx-auto max-w-2xl text-xl leading-relaxed text-neutral-600"
+				class="font-body mx-auto max-w-2xl text-lg leading-relaxed text-neutral-600 md:text-xl"
 				in:fade={{ duration: 800, delay: 400 }}
 			>
-				Embark on a journey through Southern Italian heritage. Select your preferred date, time, and
-				experience level.
+				Follow the steps below to secure your spot.
 			</p>
 		</header>
 
 		<!-- Progress Steps -->
-		<div class="mb-12" in:slide={{ duration: 600, delay: 600 }}>
-			<div class="mb-8 flex justify-center">
-				<div class="flex items-center space-x-4 md:space-x-8">
-					{#each steps as step, index}
+		<div class="mb-12" in:slide={{ duration: 600, delay: 600, axis: 'y' }}>
+			<div class="flex items-center justify-center space-x-2 md:space-x-4">
+				{#each steps as step, index (step.id)}
+					{@const isCompleted = step.isComplete()}
+					{@const isActive = currentStep === step.id}
+					{@const isAccessible = isStepAccessible(step.id)}
+					<div class="flex items-center">
 						<button
 							type="button"
-							class="group flex items-center space-x-3 transition-all duration-300 hover:scale-105"
-							class:opacity-50={!step.isComplete && !step.isActive}
+							class="group flex items-center space-x-3 rounded-full p-2 transition-all duration-300 disabled:cursor-not-allowed disabled:opacity-60"
+							class:hover:bg-neutral-100={isAccessible}
 							onclick={() => goToStep(step.id)}
-							disabled={(step.id === 2 && !canProceedToStep2) ||
-								(step.id === 3 && !canProceedToStep3) ||
-								(step.id === 4 && !canProceedToStep4)}
+							disabled={!isAccessible}
+							aria-label={`Go to step ${step.id}: ${step.title}`}
 						>
 							<div
-								class="flex h-12 w-12 items-center justify-center rounded-full border-2 transition-all duration-300"
-								class:bg-primary-600={step.isComplete}
-								class:border-primary-600={step.isComplete}
-								class:text-white={step.isComplete}
-								class:bg-primary-100={step.isActive && !step.isComplete}
-								class:border-primary-400={step.isActive && !step.isComplete}
-								class:text-primary-600={step.isActive && !step.isComplete}
-								class:border-neutral-200={!step.isActive && !step.isComplete}
-								class:text-neutral-400={!step.isActive && !step.isComplete}
+								class="flex h-10 w-10 items-center justify-center rounded-full border-2 transition-all duration-300 md:h-12 md:w-12"
+								class:bg-primary-600={isCompleted}
+								class:border-primary-600={isCompleted}
+								class:text-white={isCompleted}
+								class:bg-primary-100={isActive && !isCompleted}
+								class:border-primary-400={isActive && !isCompleted}
+								class:text-primary-600={isActive && !isCompleted}
+								class:border-neutral-200={!isActive && !isCompleted}
+								class:text-neutral-400={!isActive && !isCompleted}
 							>
-								{#if step.isComplete}
-									<svg class="h-5 w-5" fill="currentColor" viewBox="0 0 20 20">
-										<path
-											fill-rule="evenodd"
-											d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
-											clip-rule="evenodd"
-										/>
-									</svg>
+								{#if isCompleted}
+									<Check class="h-5 w-5" />
 								{:else}
 									<svelte:component this={step.icon} class="h-5 w-5" />
 								{/if}
 							</div>
-
 							<div class="hidden text-left md:block">
 								<div class="text-sm font-semibold text-neutral-900">{step.title}</div>
 								<div class="text-xs text-neutral-500">{step.description}</div>
 							</div>
 						</button>
+					</div>
 
-						{#if index < steps.length - 1}
-							<div
-								class="h-0.5 w-8 bg-neutral-200 transition-all duration-500"
-								class:bg-primary-600={steps[index + 1].isComplete ||
-									(step.isComplete && steps[index + 1].isActive)}
-							></div>
-						{/if}
-					{/each}
-				</div>
+					{#if index < steps.length - 1}
+						<div
+							class="h-0.5 w-8 flex-shrink-0 bg-neutral-200 transition-all duration-500"
+							class:bg-primary-600={isStepAccessible(step.id + 1)}
+						></div>
+					{/if}
+				{/each}
 			</div>
 		</div>
 
 		<!-- Error Alert -->
-		{#if $bookingError || hasError}
+		{#if $bookingError}
 			<div class="mb-8" transition:slide={{ duration: 300 }}>
-				<Alert type="error" message={$bookingError || 'Something went wrong. Please try again.'} />
+				<Alert type="error" message={$bookingError} />
 			</div>
 		{/if}
 
 		<!-- Main Content Grid -->
-		<div class="grid gap-8 lg:grid-cols-3">
+		<div class="grid grid-cols-1 gap-8 lg:grid-cols-3 lg:gap-12">
 			<!-- Steps Content Area -->
 			<div class="lg:col-span-2">
-				<div class="shadow-exhibit overflow-hidden rounded-2xl border border-neutral-100 bg-white">
+				<div
+					class="shadow-exhibit relative overflow-hidden rounded-2xl border border-neutral-100 bg-white"
+				>
 					<!-- Step 1: Date Selection -->
 					{#if currentStep === 1}
-						<div class="p-8" in:fade={{ duration: 400 }} out:fade={{ duration: 200 }}>
-							<div class="mb-6">
-								<h2 class="font-heading mb-2 text-2xl font-bold text-neutral-900">
-									Select Your Visit Date
-								</h2>
-								<p class="text-neutral-600">
-									Choose from available dates for your museum experience.
-								</p>
-							</div>
-
-							<div class="relative">
-								{#if isLoading}
-									<div
-										class="absolute inset-0 z-10 flex items-center justify-center rounded-lg bg-white/80"
-									>
-										<Loader />
-									</div>
-								{/if}
-								<Calendar class="w-full" />
-							</div>
+						<div class="p-6 md:p-8" in:fade={{ duration: 400 }} out:fade={{ duration: 200 }}>
+							<h2 class="font-heading mb-2 text-2xl font-bold text-neutral-900">
+								Select Your Visit Date
+							</h2>
+							<p class="mb-6 text-neutral-600">
+								Choose an available date for your museum experience.
+							</p>
+							<Calendar class="w-full" on:select={goToNextStep} />
 						</div>
 					{/if}
 
-					<!-- Step 2: Time Slot Selection -->
+					<!-- Step 2: Ticket Selection -->
 					{#if currentStep === 2}
-						<div class="p-8" in:fade={{ duration: 400 }} out:fade={{ duration: 200 }}>
-							<div class="mb-6">
-								<h2 class="font-heading mb-2 text-2xl font-bold text-neutral-900">
-									Choose Your Time Slot
-								</h2>
-								<p class="text-neutral-600">
-									Select the perfect time for your visit on {$selectedDate}.
-								</p>
-							</div>
-
-							<div class="relative">
-								{#if isLoading}
-									<div
-										class="absolute inset-0 z-10 flex items-center justify-center rounded-lg bg-white/80"
-									>
-										<Loader />
-									</div>
-								{/if}
-								<TimeSlotPicker class="w-full" />
-							</div>
+						<div class="p-6 md:p-8" in:fade={{ duration: 400 }} out:fade={{ duration: 200 }}>
+							<h2 class="font-heading mb-2 text-2xl font-bold text-neutral-900">
+								Select Your Tickets
+							</h2>
+							<p class="mb-6 text-neutral-600">
+								Choose the right experience for you or your group.
+							</p>
+							<TicketSelector language="en" class="w-full" />
 						</div>
 					{/if}
 
-					<!-- Step 3: Ticket Selection -->
+					<!-- Step 3: Time Slot Selection -->
 					{#if currentStep === 3}
-						<div class="p-8" in:fade={{ duration: 400 }} out:fade={{ duration: 200 }}>
-							<div class="mb-6">
-								<h2 class="font-heading mb-2 text-2xl font-bold text-neutral-900">
-									Select Your Tickets
-								</h2>
-								<p class="text-neutral-600">Choose the right experience for your group.</p>
-							</div>
-
-							<div class="relative">
-								{#if isLoading}
-									<div
-										class="absolute inset-0 z-10 flex items-center justify-center rounded-lg bg-white/80"
-									>
-										<Loader />
-									</div>
-								{/if}
-								<TicketSelector language="en" class="w-full" />
-							</div>
+						<div class="p-6 md:p-8" in:fade={{ duration: 400 }} out:fade={{ duration: 200 }}>
+							<h2 class="font-heading mb-2 text-2xl font-bold text-neutral-900">
+								Choose Your Time Slot
+							</h2>
+							<p class="mb-6 text-neutral-600">
+								Select the perfect time for your visit on {$selectedDate?.toLocaleDateString(
+									'en-US',
+									{ month: 'long', day: 'numeric' }
+								)}.
+							</p>
+							{#if $isLoadingTimeSlots}
+								<div class="flex h-48 items-center justify-center text-neutral-500">
+									<Loader class="mr-2 animate-spin" /> Loading available times...
+								</div>
+							{:else}
+								<TimeSlotPicker class="w-full" />
+							{/if}
 						</div>
 					{/if}
 
 					<!-- Step 4: Customer Information -->
-					{#if currentStep === 4 && showCustomerForm}
-						<div class="p-8" in:fade={{ duration: 400 }} out:fade={{ duration: 200 }}>
-							<div class="mb-6">
-								<h2 class="font-heading mb-2 text-2xl font-bold text-neutral-900">
-									Your Information
-								</h2>
-								<p class="text-neutral-600">We need a few details to complete your booking.</p>
-							</div>
-
+					{#if currentStep === 4}
+						<div class="p-6 md:p-8" in:fade={{ duration: 400 }} out:fade={{ duration: 200 }}>
+							<h2 class="font-heading mb-2 text-2xl font-bold text-neutral-900">
+								Your Information
+							</h2>
+							<p class="mb-6 text-neutral-600">We need a few details to complete your booking.</p>
 							<CustomerForm />
 						</div>
 					{/if}
 
 					<!-- Navigation Footer -->
-					<div class="border-t border-neutral-100 bg-neutral-50 p-6">
+					<div class="border-t border-neutral-100 bg-neutral-50 p-4">
 						<div class="flex items-center justify-between">
 							<button
 								type="button"
-								class="inline-flex items-center px-4 py-2 text-sm font-medium text-neutral-600 transition-colors duration-200 hover:text-neutral-900"
-								class:invisible={currentStep === 1}
+								class="inline-flex items-center rounded-md px-4 py-2 text-sm font-medium text-neutral-600 transition-colors duration-200 hover:bg-neutral-100 hover:text-neutral-900 disabled:cursor-not-allowed disabled:opacity-50"
+								disabled={currentStep === 1}
 								onclick={goToPreviousStep}
 							>
 								<ChevronLeft class="mr-1 h-4 w-4" />
@@ -464,16 +348,13 @@
 							</button>
 
 							<div class="text-sm text-neutral-500">
-								Step {currentStep} of 4
+								Step {currentStep} of {steps.length}
 							</div>
 
 							<button
 								type="button"
-								class="text-primary-600 hover:text-primary-700 inline-flex items-center px-4 py-2 text-sm font-medium transition-colors duration-200"
-								class:invisible={currentStep === 4}
-								disabled={(currentStep === 1 && !canProceedToStep2) ||
-									(currentStep === 2 && !canProceedToStep3) ||
-									(currentStep === 3 && !canProceedToStep4)}
+								class="bg-primary-600 hover:bg-primary-700 inline-flex items-center rounded-md px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors duration-200 disabled:cursor-not-allowed disabled:opacity-50"
+								disabled={currentStep === steps.length || !steps[currentStep - 1].isComplete()}
 								onclick={goToNextStep}
 							>
 								Next
@@ -487,64 +368,23 @@
 			<!-- Booking Summary Sidebar -->
 			<aside class="lg:col-span-1">
 				<div class="sticky top-8">
-					<BookingSummary bind:currentStep {handleProceedToPayment} />
+					<BookingSummary {handleProceedToPayment} bind:currentStep />
 				</div>
 			</aside>
 		</div>
 	</div>
 
-	<!-- Loading Overlay -->
+	<!-- Loading Overlay for Booking Creation -->
 	{#if $isCreatingBooking}
 		<div
-			class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
+			class="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black/60 backdrop-blur-sm"
 			transition:fade={{ duration: 300 }}
 		>
-			<div class="mx-4 max-w-sm rounded-2xl bg-white p-8 text-center shadow-2xl">
-				<Loader size="large" class="mx-auto mb-4" />
-				<h3 class="font-heading mb-2 text-xl font-bold text-neutral-900">Creating Your Booking</h3>
-				<p class="text-neutral-600">Please wait while we secure your visit...</p>
+			<div class="text-center text-white">
+				<Loader class="mx-auto mb-4 h-12 w-12 animate-spin" />
+				<h3 class="text-xl font-bold">Creating Your Booking</h3>
+				<p>Please wait while we secure your visit...</p>
 			</div>
 		</div>
 	{/if}
 </main>
-
-<style>
-	/* Custom scrollbar for WebKit browsers */
-	::-webkit-scrollbar {
-		width: 8px;
-		height: 8px;
-	}
-
-	::-webkit-scrollbar-track {
-		background: var(--color-neutral-100, #f5f5f5);
-		border-radius: 4px;
-	}
-
-	::-webkit-scrollbar-thumb {
-		background: var(--color-neutral-300, #d4d4d4);
-		border-radius: 4px;
-	}
-
-	::-webkit-scrollbar-thumb:hover {
-		background: var(--color-neutral-400, #a3a3a3);
-	}
-
-	/* Scrollbar for Firefox */
-	* {
-		scrollbar-width: thin;
-		scrollbar-color: var(--color-neutral-300, #d4d4d4) var(--color-neutral-100, #f5f5f5);
-	}
-
-	/* Smooth focus styles */
-	:focus-visible {
-		outline: 2px solid var(--color-primary-500, #3b82f6);
-		outline-offset: 2px;
-		border-radius: 4px;
-	}
-
-	/* Custom selection color */
-	::selection {
-		background: var(--color-primary-100, #dbeafe);
-		color: var(--color-primary-900, #1e3a8a);
-	}
-</style>

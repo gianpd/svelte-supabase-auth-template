@@ -2,14 +2,13 @@
 @file TicketSelector Component - Ticket type and quantity selection
 @description 
 Interactive component for selecting ticket types and quantities for museum visits.
-Displays pricing, handles quantity changes, and calculates totals.
+Updated to work with the new single-ticket booking store structure.
 
 Key features:
-- Multiple ticket type support
+- Single ticket type selection (matching new store structure)
 - Quantity increment/decrement controls
 - Real-time price calculations
 - Multilingual ticket names and descriptions
-- Group ticket handling
 - Input validation and error display
 - Responsive design for all screen sizes
 
@@ -20,7 +19,7 @@ Key features:
 - bookingStore: For ticket selection state management
 
 @notes
-- Supports both individual and group ticket types
+- Now supports single ticket selection model as per the refactored store
 - Prices are displayed in EUR format
 - Maximum quantity limits can be configured
 - Integrates with time slot capacity checking
@@ -30,14 +29,14 @@ Key features:
 <script lang="ts">
 	import { Plus, Minus, Ticket, Users, Info, AlertTriangle } from 'lucide-svelte';
 	import {
-		selectedTicketTypes,
+		selectedTicket,
 		availableTicketTypes,
 		totalPrice,
 		totalTickets,
 		validationErrors,
 		bookingActions
 	} from '$lib/stores/bookingStore';
-	import type { TicketType } from '$lib/stores/bookingStore'; // Assuming TicketType interface is exported from bookingStore
+	import type { TicketType } from '$lib/stores/bookingStore';
 
 	// Type definitions
 	interface Props {
@@ -78,25 +77,21 @@ Key features:
 		}).format(price);
 	}
 
-	// Get current quantity for a ticket type
+	// Get current quantity for a ticket type - FIXED for new store structure
 	function getQuantity(ticketTypeId: string): number {
-		return $selectedTicketTypes.get(ticketTypeId) || 0;
+		// Handle the case where selectedTicket is null or doesn't match the ticketTypeId
+		if (!$selectedTicket || $selectedTicket.id !== ticketTypeId) {
+			return 0;
+		}
+		return $selectedTicket.quantity;
 	}
 
-	// Update quantity for a ticket type
+	// Update quantity for a ticket type - FIXED for new store structure
 	function updateQuantity(ticketTypeId: string, newQuantity: number): void {
 		// Validate quantity limits
 		const clampedQuantity = Math.max(0, Math.min(newQuantity, maxQuantityPerType));
 
-		// Check total tickets limit
-		const currentTotal: number = $totalTickets;
-		const currentQuantity = getQuantity(ticketTypeId);
-		const quantityDiff = clampedQuantity - currentQuantity;
-
-		if (currentTotal + quantityDiff > maxTotalTickets) {
-			return; // Don't update if it would exceed total limit
-		}
-
+		// Since we only support one ticket type at a time, we can directly update
 		bookingActions.updateTicketQuantity(ticketTypeId, clampedQuantity);
 	}
 
@@ -119,13 +114,17 @@ Key features:
 		updateQuantity(ticketTypeId, value);
 	}
 
-	// Check if increment is disabled
+	// Check if increment is disabled - UPDATED for new store structure
 	function isIncrementDisabled(ticketTypeId: string): boolean {
 		if (disabled) return true;
 		const currentQuantity = getQuantity(ticketTypeId);
-		const currentTotal: number = $totalTickets;
 
-		return currentQuantity >= maxQuantityPerType || currentTotal >= maxTotalTickets;
+		// If this ticket type is not selected and another one is, disable increment
+		if ($selectedTicket && $selectedTicket.id !== ticketTypeId && currentQuantity === 0) {
+			return true;
+		}
+
+		return currentQuantity >= maxQuantityPerType || currentQuantity >= maxTotalTickets;
 	}
 
 	// Check if decrement is disabled
@@ -147,6 +146,16 @@ Key features:
 		const quantity = getQuantity(ticketType.id);
 		return ticketType.price * quantity;
 	}
+
+	// Check if a ticket type is selected
+	function isTicketTypeSelected(ticketTypeId: string): boolean {
+		return $selectedTicket?.id === ticketTypeId;
+	}
+
+	// Check if another ticket type is selected (for showing disabled state)
+	function isAnotherTicketSelected(ticketTypeId: string): boolean {
+		return $selectedTicket !== null && $selectedTicket.id !== ticketTypeId;
+	}
 </script>
 
 <div class="ticket-selector {className}">
@@ -156,7 +165,7 @@ Key features:
 			<Ticket class="text-primary-600 h-5 w-5" />
 			<h3 class="text-lg font-semibold text-neutral-900">Select Tickets</h3>
 		</div>
-		<p class="text-sm text-neutral-600">Choose your ticket types and quantities</p>
+		<p class="text-sm text-neutral-600">Choose your ticket type and quantity</p>
 	</div>
 
 	<!-- Validation Errors -->
@@ -169,6 +178,18 @@ Key features:
 		</div>
 	{/if}
 
+	<!-- Single Ticket Selection Notice -->
+	{#if $selectedTicket}
+		<div class="selection-notice bg-primary-50 border-primary-200 mb-4 rounded-lg border p-3">
+			<div class="flex items-center space-x-2">
+				<Info class="text-primary-600 h-4 w-4" />
+				<span class="text-primary-800 text-sm">
+					You can select one ticket type at a time. To change types, set the current selection to 0.
+				</span>
+			</div>
+		</div>
+	{/if}
+
 	<!-- Ticket Types List -->
 	<div class="ticket-types-list space-y-4">
 		{#each $availableTicketTypes as ticketType (ticketType.id)}
@@ -176,15 +197,24 @@ Key features:
 			{@const subtotal = calculateSubtotal(ticketType)}
 			{@const name = getLocalizedText(ticketType.name_translations, 'Ticket')}
 			{@const description = getLocalizedText(ticketType.description_translations, '')}
+			{@const isSelected = isTicketTypeSelected(ticketType.id)}
+			{@const isOtherSelected = isAnotherTicketSelected(ticketType.id)}
 
 			<div
-				class="ticket-type-card hover:shadow-medium rounded-lg border border-neutral-200 bg-white p-4 transition-shadow"
+				class="ticket-type-card hover:shadow-medium rounded-lg border bg-white p-4 transition-all duration-200"
+				class:border-primary-300={isSelected}
+				class:bg-primary-50={isSelected}
+				class:border-neutral-200={!isSelected}
+				class:opacity-60={isOtherSelected}
 			>
 				<!-- Ticket Type Header -->
 				<div class="ticket-header mb-3 flex items-start justify-between">
 					<div class="ticket-info flex-1">
 						<h4 class="ticket-name mb-1 text-lg font-semibold text-neutral-900">
 							{name}
+							{#if isSelected}
+								<span class="text-primary-600 ml-2 text-sm">✓ Selected</span>
+							{/if}
 						</h4>
 
 						<div class="ticket-meta flex items-center space-x-4 text-sm text-neutral-600">
@@ -244,7 +274,7 @@ Key features:
 								value={quantity}
 								min="0"
 								max={maxQuantityPerType}
-								{disabled}
+								disabled={disabled || isOtherSelected}
 								on:input={(e) => handleInputChange(ticketType.id, e)}
 								aria-label="Quantity for {name}"
 							/>
@@ -278,8 +308,8 @@ Key features:
 
 				<!-- Quantity Info -->
 				{#if quantity > 0}
-					<div class="quantity-info mt-3 rounded-md bg-neutral-50 p-2">
-						<div class="flex items-center justify-between text-xs text-neutral-600">
+					<div class="quantity-info bg-primary-50 mt-3 rounded-md p-2">
+						<div class="text-primary-700 flex items-center justify-between text-xs">
 							<span>Selected: {quantity} ticket{quantity !== 1 ? 's' : ''}</span>
 							{#if ticketType.group_size && ticketType.group_size > 1}
 								<span>Total people: {quantity * ticketType.group_size}</span>
@@ -297,14 +327,25 @@ Key features:
 			<h4 class="summary-title text-primary-900 mb-3 text-lg font-semibold">Order Summary</h4>
 
 			<div class="summary-details space-y-2">
-				<!-- Total Tickets -->
-				<div class="summary-row flex items-center justify-between">
-					<span class="text-primary-800">Total Tickets:</span>
-					<span class="text-primary-900 font-medium">{$totalTickets}</span>
-				</div>
+				<!-- Selected Ticket Type -->
+				{#if $selectedTicket}
+					{@const selectedType = $availableTicketTypes.find((t) => t.id === $selectedTicket.id)}
+					{#if selectedType}
+						<div class="summary-row flex items-center justify-between text-sm">
+							<span class="text-primary-800">
+								{getLocalizedText(selectedType.name_translations, 'Ticket')}
+							</span>
+							<span class="text-primary-900 font-medium">
+								{$selectedTicket.quantity} × {formatPrice(selectedType.price)}
+							</span>
+						</div>
+					{/if}
+				{/if}
 
 				<!-- Total Price -->
-				<div class="summary-row flex items-center justify-between text-lg font-bold">
+				<div
+					class="summary-row border-primary-200 flex items-center justify-between border-t pt-2 text-lg font-bold"
+				>
 					<span class="text-primary-900">Total:</span>
 					<span class="text-primary-900">{formatPrice($totalPrice)}</span>
 				</div>
@@ -329,7 +370,7 @@ Key features:
 		>
 			<Ticket class="mx-auto mb-2 h-8 w-8 text-neutral-400" />
 			<p class="text-neutral-600">No tickets selected</p>
-			<p class="mt-1 text-sm text-neutral-500">Choose your ticket types above to continue</p>
+			<p class="mt-1 text-sm text-neutral-500">Choose your ticket type above to continue</p>
 		</div>
 	{/if}
 </div>
@@ -343,13 +384,13 @@ Key features:
 	}
 
 	/* Hover effects for ticket cards */
-	.ticket-type-card:hover {
+	.ticket-type-card:hover:not(.opacity-60) {
 		transform: translateY(-1px);
 	}
 
 	/* Focus ring for accessibility */
-	.quantity-btn:focus,
-	.quantity-input:focus {
+	.quantity-btn:focus-visible,
+	.quantity-input:focus-visible {
 		outline: 2px solid #2563eb;
 		outline-offset: 2px;
 	}
@@ -405,5 +446,10 @@ Key features:
 			opacity: 1;
 			transform: translateX(0);
 		}
+	}
+
+	/* Visual feedback for selected ticket */
+	.ticket-type-card.border-primary-300 {
+		box-shadow: 0 0 0 1px rgb(147 197 253 / 0.5);
 	}
 </style>

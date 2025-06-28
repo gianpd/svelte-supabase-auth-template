@@ -1,3 +1,0 @@
-2025-06-28 13:08:41,722 - INFO - Script collection started
-2025-06-28 13:08:41,731 - WARNING - Invalid Git repository. Falling back to directory scan.
-2025-06-28 13:08:41,733 - INFO - Completed. Files: 6, Lines: 1217, Errors: 0
