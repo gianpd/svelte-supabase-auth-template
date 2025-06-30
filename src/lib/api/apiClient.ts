@@ -1,18 +1,21 @@
 /**
- * @file apiClient.ts
- * @purpose Centralized API client for communicating with FastAPI backend
- * 
- * @dependencies
- * - SvelteKit's fetch: Server-side fetch during load functions
- * - TypeScript: Strong typing for API responses and requests
- *
- * @notes
- * - Handles authentication for admin endpoints
- * - Provides error handling and response validation
- * - Supports both server-side and client-side requests
- * - Error handling: Throws typed errors for proper catch handling
- * - Updated to work correctly with Vite proxy configuration
- */
+* @file apiClient.ts
+* @purpose Centralized API client for communicating with FastAPI backend
+*
+* @dependencies
+* - SvelteKit's fetch: Server-side fetch during load functions
+* - TypeScript: Strong typing for API responses and requests
+*
+* @notes
+* - Handles authentication for admin endpoints
+* - Provides error handling and response validation
+* - Supports both server-side and client-side requests
+* - Error handling: Throws typed errors for proper catch handling
+* - Updated to include payment-related endpoints.
+*/
+
+
+import type { OrderCreatePayload } from "$lib/schemas/payment";
 
 // Types based on backend schema structure
 export interface Language {
@@ -368,6 +371,17 @@ export class ApiClient {
         );
     }
 
+    async getMerchandiseItem(
+        merchandiseId: string,
+        customFetch?: typeof fetch
+    ): Promise<Merchandise> {
+        return this.request<Merchandise>(
+            `/merchandise/${merchandiseId}`,
+            { method: 'GET' },
+            customFetch
+        );
+    }
+
     // Booking API methods
     async createBooking(
         bookingData: Partial<Booking>,
@@ -390,6 +404,21 @@ export class ApiClient {
         return this.request<Booking>(
             `/bookings/${bookingId}`,
             { method: 'GET' },
+            customFetch
+        );
+    }
+
+    // --- ADDED: Payment API methods ---
+    async createPaymentIntent(
+        payload: OrderCreatePayload,
+        customFetch?: typeof fetch
+    ): Promise<{ client_secret: string }> {
+        return this.request<{ client_secret: string }>(
+            '/payments/create-payment-intent',
+            {
+                method: 'POST',
+                body: JSON.stringify(payload)
+            },
             customFetch
         );
     }

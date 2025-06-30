@@ -1,26 +1,28 @@
 /**
- * @file Booking Store - Centralized state management for the booking process
- * @description 
- * Manages the entire booking flow state using Svelte stores.
- * Provides reactive state for date, time, ticket, and pricing.
- * This version is refactored for simplicity and robustness, enforcing a single ticket type per booking
- * to align with the backend API and simplify the user flow.
- * 
- * @dependencies
- * - Svelte: For reactive stores and state management.
- * - apiClient: For fetching ticket types and availability data.
- *
- * @notes
- * - Enforces a single ticket type selection model for clarity and API compatibility.
- * - Time slots are now loaded on-demand after a date and ticket type have been selected.
- * - State is reset hierarchically (e.g., changing date clears tickets and time) to ensure consistency.
- * - The export 'selectedTicketTypes' has been removed and replaced with 'selectedTicket'.
- */
+* @file Booking Store - Centralized state management for the booking process
+* @description
+* Manages the entire booking flow state using Svelte stores.
+* Provides reactive state for date, time, ticket, and pricing.
+* This version is refactored for simplicity and robustness, enforcing a single ticket type per booking
+* to align with the backend API and simplify the user flow.
+*
+* @dependencies
+* - Svelte: For reactive stores and state management.
+* - apiClient: For fetching ticket types and availability data.
+*
+* @notes
+* - Enforces a single ticket type selection model for clarity and API compatibility.
+* - Time slots are now loaded on-demand after a date and ticket type have been selected.
+* - State is reset hierarchically (e.g., changing date clears tickets and time) to ensure consistency.
+* - Exports key interfaces like BookingSummary for use in other components.
+*/
+
+
 
 import { writable, derived, get, type Writable, type Readable } from 'svelte/store';
 import { apiClient } from '$lib/api/apiClient';
 
-// --- TYPE DEFINITIONS ---
+// --- TYPE DEFINITIONS (EXPORTED FOR REUSE) ---
 
 /** Represents the availability status of a date. */
 export type DateAvailabilityStatus = 'available' | 'unavailable' | 'loading' | 'unknown';
@@ -29,13 +31,15 @@ export type DateAvailabilityStatus = 'available' | 'unavailable' | 'loading' | '
 export interface TicketType {
     id: string;
     price: number;
-    name?: string;
+    name_translations: Record<string, string>;
     [key: string]: any;
 }
 
 /** Represents an available time slot for a booking. */
 export interface TimeSlot {
     id: string;
+    start_time: string;
+    end_time: string;
     available_slots: number;
     [key: string]: any;
 }
@@ -72,7 +76,7 @@ interface TicketSummary {
 }
 
 /** A comprehensive summary of the entire current booking state. */
-interface BookingSummary {
+export interface BookingSummary {
     date: Date | null;
     timeSlot: TimeSlot | null;
     tickets: TicketSummary[];
@@ -83,32 +87,26 @@ interface BookingSummary {
 
 /** Data structure for the booking creation API payload. */
 interface BookingData {
-    booking_date: string;
     time_slot_id: string;
-    ticket_type_id: string;
     quantity: number;
-    total_price: number;
-    customer_name: string | null;
-    customer_email: string | null;
-    source: string;
+    customer_name: string;
+    customer_email: string;
+    user_id?: string;
 }
 
 // --- CORE BOOKING STATE ---
 
 export const selectedDate: Writable<Date | null> = writable(null);
 export const selectedTimeSlot: Writable<TimeSlot | null> = writable(null);
-// REFACTORED: Store a single selected ticket object instead of a Map to simplify logic and align with the backend API.
 export const selectedTicket: Writable<SelectedTicket | null> = writable(null);
 export const availableTicketTypes: Writable<TicketType[]> = writable([]);
 export const availableTimeSlots: Writable<TimeSlot[]> = writable([]);
-
 
 export const customerInfo: Writable<CustomerInfo> = writable({
     name: '',
     email: '',
     isGuest: true
 });
-
 
 // --- NEW: STATE FOR DATE AVAILABILITY CACHE ---
 /**
@@ -117,14 +115,8 @@ export const customerInfo: Writable<CustomerInfo> = writable({
  */
 export const dateAvailability: Writable<Map<string, Map<string, DateAvailabilityStatus>>> = writable(new Map());
 
-
 // --- LOADING AND ERROR STATES ---
-
-// --- NEW: LOADING STATE FOR DATE AVAILABILITY ---
 export const isLoadingDateAvailability: Writable<boolean> = writable(false);
-
-// --- LOADING AND ERROR STATES ---
-
 export const isLoadingTicketTypes: Writable<boolean> = writable(false);
 export const isLoadingTimeSlots: Writable<boolean> = writable(false);
 export const isCreatingBooking: Writable<boolean> = writable(false);
@@ -176,7 +168,7 @@ export const bookingSummary: Readable<BookingSummary> = derived(
             tickets,
             totalPrice: $totalPrice,
             totalTickets: $totalTickets,
-            isComplete: !!($selectedDate && $selectedTimeSlot && $totalTickets > 0)
+            isComplete: !!($selectedDate && $selectedTimeSlot && $totalTickets > 0 && get(customerInfo).name && get(customerInfo).email)
         };
     }
 );
@@ -185,15 +177,12 @@ export const bookingSummary: Readable<BookingSummary> = derived(
 
 export const bookingActions = {
     /**
-     * Loads all available ticket types from the API.
-     /**
      * Fetches and caches the availability of all days in a given month for a specific ticket type.
      * @param {string} ticketTypeId - The ID of the ticket type.
      * @param {number} year - The year to check.
      * @param {number} month - The month to check (0-indexed, e.g., 0 for January).
      * @param {typeof fetch} [customFetch=fetch] - Optional custom fetch for SSR.
      */
-
     async loadDateAvailabilityForTicket(
         ticketTypeId: string,
         year: number,
@@ -210,27 +199,19 @@ export const bookingActions = {
             const date = new Date(year, month, day);
             const dateString = date.toISOString().split('T')[0];
 
-            // Skip if already fetched
             if (availabilityMap.has(dateString)) continue;
 
-            // Set to loading state
             availabilityMap.set(dateString, 'loading');
 
             const promise = apiClient.getTimeSlots(ticketTypeId, dateString, customFetch)
                 .then(timeSlots => {
-                    if (timeSlots && timeSlots.length > 0) {
-                        availabilityMap.set(dateString, 'available');
-                    } else {
-                        availabilityMap.set(dateString, 'unavailable');
-                    }
+                    availabilityMap.set(dateString, timeSlots && timeSlots.length > 0 ? 'available' : 'unavailable');
                 })
                 .catch(error => {
-                    // A 404 error specifically means no slots are available for that day.
                     if (error instanceof Error && (error.message.includes('404') || error.message.includes('No time slots found'))) {
                         availabilityMap.set(dateString, 'unavailable');
                     } else {
                         console.error(`Failed to check availability for ${dateString}:`, error);
-                        // Could set a specific error status, but 'unavailable' is safest for the user
                         availabilityMap.set(dateString, 'unavailable');
                     }
                 });
@@ -238,12 +219,8 @@ export const bookingActions = {
             promises.push(promise);
         }
 
-        // Update the store immediately with loading states
         dateAvailability.update(mainMap => mainMap.set(ticketTypeId, availabilityMap));
-
         await Promise.allSettled(promises);
-
-        // Final update with all results
         dateAvailability.update(mainMap => mainMap.set(ticketTypeId, availabilityMap));
         isLoadingDateAvailability.set(false);
     },
@@ -264,7 +241,6 @@ export const bookingActions = {
 
     /**
      * Loads available time slots based on the current date and ticket selection.
-     * This should be called from the UI when ready to select a time.
      * @param {typeof fetch} [customFetch=fetch] - Optional custom fetch for SSR.
      */
     async loadTimeSlotsForSelection(customFetch: typeof fetch = fetch): Promise<void> {
@@ -289,8 +265,6 @@ export const bookingActions = {
             }
         } catch (error) {
             console.error('Failed to load time slots:', error);
-
-            // Handle the case when no time slots are available
             if (error instanceof Error && error.message.includes('No time slots found')) {
                 availableTimeSlots.set([]);
                 bookingError.set('No available time slots for this date and ticket type. Please try a different date.');
@@ -308,41 +282,27 @@ export const bookingActions = {
      * @param {string} ticketTypeId - The ID of the ticket type.
      * @param {number} quantity - The new quantity.
      */
-    /**
-        * Updates the selected ticket type and quantity. Replaces any existing selection.
-        * @param {string} ticketTypeId - The ID of the ticket type.
-        * @param {number} quantity - The new quantity.
-        */
     updateTicketQuantity(ticketTypeId: string, quantity: number): void {
         const currentTicket = get(selectedTicket);
-
         if (quantity > 0) {
             selectedTicket.set({ id: ticketTypeId, quantity });
         } else {
             selectedTicket.set(null);
         }
-
-        // --- MODIFIED: CLEAR AVAILABILITY CACHE IF TICKET TYPE CHANGES ---
         if (currentTicket?.id !== ticketTypeId) {
-            dateAvailability.set(new Map()); // Clear cache for new ticket type
+            dateAvailability.set(new Map());
         }
-
-        // When tickets change, a previously selected time slot might become invalid.
         selectedTimeSlot.set(null);
-        availableTimeSlots.set([]); // Also clear available slots
+        availableTimeSlots.set([]);
         validationErrors.update(current => ({ ...current, tickets: undefined, capacity: undefined }));
     },
 
     /**
-     * Sets the selected date and clears dependent state (tickets and time slot).
+     * Sets the selected date and clears dependent state (time slot).
      * @param {Date} date - The selected date.
      */
     setSelectedDate(date: Date): void {
         selectedDate.set(date);
-        // Reset subsequent selections to ensure a clean state.
-        // --- MODIFIED: DO NOT RESET TICKET SELECTION ---
-        // The user should be able to change the date after selecting a ticket.
-        // selectedTicket.set(null); 
         selectedTimeSlot.set(null);
         availableTimeSlots.set([]);
         validationErrors.update(current => ({ ...current, date: undefined }));
@@ -393,13 +353,17 @@ export const bookingActions = {
     },
 
     /**
-     * Creates a booking with the current state.
-     * @param {typeof fetch} [customFetch=fetch] - Optional custom fetch for SSR.
-     * @returns {Promise<any>} - The created booking object from the API.
+     * This method is now DEPRECATED in favor of creating a full order payload for the
+     * `/payments/create-payment-intent` endpoint. A standalone booking creation via the
+     * frontend is no longer the standard flow.
+     * This function is maintained for potential direct use or testing but should not be
+     * part of the main checkout flow.
      */
     async createBooking(customFetch: typeof fetch = fetch): Promise<any> {
         if (!this.validateBooking()) {
-            throw new Error('Please correct the validation errors before proceeding.');
+            const errorMsg = 'Please correct the validation errors before proceeding.';
+            bookingError.set(errorMsg);
+            throw new Error(errorMsg);
         }
 
         isCreatingBooking.set(true);
@@ -408,25 +372,26 @@ export const bookingActions = {
         try {
             const summary = get(bookingSummary);
             const customer = get(customerInfo);
-            const ticketInfo = summary.tickets[0];
+            const ticket = get(selectedTicket);
 
             const bookingData: BookingData = {
-                booking_date: summary.date!.toISOString().split('T')[0],
                 time_slot_id: summary.timeSlot!.id,
-                ticket_type_id: ticketInfo.type.id,
-                quantity: ticketInfo.quantity,
-                total_price: summary.totalPrice,
-                customer_name: customer.isGuest ? customer.name : null,
-                customer_email: customer.isGuest ? customer.email : null,
-                source: 'ONLINE'
+                quantity: ticket!.quantity,
+                customer_name: customer.name,
+                customer_email: customer.email,
             };
 
+            // The standalone booking endpoint is no longer the primary path.
+            // This demonstrates how it *would* work if needed.
+            console.warn("Using deprecated createBooking flow. The standard flow is via the checkout/payment intent page.");
             const booking = await apiClient.createBooking(bookingData, customFetch);
-            this.resetBooking();
+            // In a real scenario, we might reset state here.
+            // this.resetBooking();
             return booking;
         } catch (error) {
             console.error('Failed to create booking:', error);
-            bookingError.set('An error occurred while creating your booking. Please try again.');
+            const errorMsg = 'An error occurred while creating your booking. Please try again.';
+            bookingError.set(errorMsg);
             throw error;
         } finally {
             isCreatingBooking.set(false);
@@ -435,6 +400,7 @@ export const bookingActions = {
 
     /**
      * Resets all booking state to initial values for a new booking.
+     * Also clears associated validation and error messages.
      */
     resetBooking(): void {
         selectedDate.set(null);
@@ -446,9 +412,7 @@ export const bookingActions = {
         validationErrors.set({});
     },
 
-    /**
-     * Clears all error states from the store.
-     */
+    /** Clears all error states from the store. */
     clearErrors(): void {
         bookingError.set(null);
         validationErrors.set({});

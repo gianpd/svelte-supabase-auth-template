@@ -40,7 +40,7 @@ Key features:
 	interface Props {
 		class?: string;
 		disabled?: boolean;
-		viewDate?: Date; // Bound from parent to control the calendar's month/year
+		viewDate: Date; // Bound from parent to control the calendar's month/year
 		selectedTicketId?: string | null; // The currently selected ticket type
 		availabilityMap?: Map<string, DateAvailabilityStatus> | null; // Cached availability data
 	}
@@ -50,7 +50,7 @@ Key features:
 	let {
 		class: className = '',
 		disabled = false,
-		viewDate = new Date(),
+		viewDate = $bindable(),
 		selectedTicketId = null,
 		availabilityMap = null
 	}: Props = $props();
