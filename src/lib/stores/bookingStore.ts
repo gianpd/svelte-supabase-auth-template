@@ -22,6 +22,9 @@ import { apiClient } from '$lib/api/apiClient';
 
 // --- TYPE DEFINITIONS ---
 
+/** Represents the availability status of a date. */
+export type DateAvailabilityStatus = 'available' | 'unavailable' | 'loading' | 'unknown';
+
 /** Represents a ticket type available for booking. */
 export interface TicketType {
     id: string;
@@ -99,11 +102,26 @@ export const selectedTicket: Writable<SelectedTicket | null> = writable(null);
 export const availableTicketTypes: Writable<TicketType[]> = writable([]);
 export const availableTimeSlots: Writable<TimeSlot[]> = writable([]);
 
+
 export const customerInfo: Writable<CustomerInfo> = writable({
     name: '',
     email: '',
     isGuest: true
 });
+
+
+// --- NEW: STATE FOR DATE AVAILABILITY CACHE ---
+/**
+ * Caches the availability status of dates for each ticket type.
+ * Structure: Map<ticketTypeId, Map<dateString (YYYY-MM-DD), DateAvailabilityStatus>>
+ */
+export const dateAvailability: Writable<Map<string, Map<string, DateAvailabilityStatus>>> = writable(new Map());
+
+
+// --- LOADING AND ERROR STATES ---
+
+// --- NEW: LOADING STATE FOR DATE AVAILABILITY ---
+export const isLoadingDateAvailability: Writable<boolean> = writable(false);
 
 // --- LOADING AND ERROR STATES ---
 
@@ -168,8 +186,68 @@ export const bookingSummary: Readable<BookingSummary> = derived(
 export const bookingActions = {
     /**
      * Loads all available ticket types from the API.
+     /**
+     * Fetches and caches the availability of all days in a given month for a specific ticket type.
+     * @param {string} ticketTypeId - The ID of the ticket type.
+     * @param {number} year - The year to check.
+     * @param {number} month - The month to check (0-indexed, e.g., 0 for January).
      * @param {typeof fetch} [customFetch=fetch] - Optional custom fetch for SSR.
      */
+
+    async loadDateAvailabilityForTicket(
+        ticketTypeId: string,
+        year: number,
+        month: number,
+        customFetch: typeof fetch = fetch
+    ): Promise<void> {
+        isLoadingDateAvailability.set(true);
+
+        const availabilityMap = get(dateAvailability).get(ticketTypeId) || new Map<string, DateAvailabilityStatus>();
+        const daysInMonth = new Date(year, month + 1, 0).getDate();
+        const promises: Promise<void>[] = [];
+
+        for (let day = 1; day <= daysInMonth; day++) {
+            const date = new Date(year, month, day);
+            const dateString = date.toISOString().split('T')[0];
+
+            // Skip if already fetched
+            if (availabilityMap.has(dateString)) continue;
+
+            // Set to loading state
+            availabilityMap.set(dateString, 'loading');
+
+            const promise = apiClient.getTimeSlots(ticketTypeId, dateString, customFetch)
+                .then(timeSlots => {
+                    if (timeSlots && timeSlots.length > 0) {
+                        availabilityMap.set(dateString, 'available');
+                    } else {
+                        availabilityMap.set(dateString, 'unavailable');
+                    }
+                })
+                .catch(error => {
+                    // A 404 error specifically means no slots are available for that day.
+                    if (error instanceof Error && (error.message.includes('404') || error.message.includes('No time slots found'))) {
+                        availabilityMap.set(dateString, 'unavailable');
+                    } else {
+                        console.error(`Failed to check availability for ${dateString}:`, error);
+                        // Could set a specific error status, but 'unavailable' is safest for the user
+                        availabilityMap.set(dateString, 'unavailable');
+                    }
+                });
+
+            promises.push(promise);
+        }
+
+        // Update the store immediately with loading states
+        dateAvailability.update(mainMap => mainMap.set(ticketTypeId, availabilityMap));
+
+        await Promise.allSettled(promises);
+
+        // Final update with all results
+        dateAvailability.update(mainMap => mainMap.set(ticketTypeId, availabilityMap));
+        isLoadingDateAvailability.set(false);
+    },
+
     async loadTicketTypes(customFetch: typeof fetch = fetch): Promise<void> {
         isLoadingTicketTypes.set(true);
         bookingError.set(null);
@@ -211,8 +289,15 @@ export const bookingActions = {
             }
         } catch (error) {
             console.error('Failed to load time slots:', error);
-            bookingError.set('Unable to load available time slots. Please try again.');
-            availableTimeSlots.set([]);
+
+            // Handle the case when no time slots are available
+            if (error instanceof Error && error.message.includes('No time slots found')) {
+                availableTimeSlots.set([]);
+                bookingError.set('No available time slots for this date and ticket type. Please try a different date.');
+            } else {
+                bookingError.set('Unable to load available time slots. Please try again.');
+                availableTimeSlots.set([]);
+            }
         } finally {
             isLoadingTimeSlots.set(false);
         }
@@ -223,17 +308,28 @@ export const bookingActions = {
      * @param {string} ticketTypeId - The ID of the ticket type.
      * @param {number} quantity - The new quantity.
      */
+    /**
+        * Updates the selected ticket type and quantity. Replaces any existing selection.
+        * @param {string} ticketTypeId - The ID of the ticket type.
+        * @param {number} quantity - The new quantity.
+        */
     updateTicketQuantity(ticketTypeId: string, quantity: number): void {
+        const currentTicket = get(selectedTicket);
+
         if (quantity > 0) {
             selectedTicket.set({ id: ticketTypeId, quantity });
         } else {
             selectedTicket.set(null);
         }
 
-        // When tickets change, a previously selected time slot might become invalid.
-        // Resetting it is the safest approach to force re-selection.
-        selectedTimeSlot.set(null);
+        // --- MODIFIED: CLEAR AVAILABILITY CACHE IF TICKET TYPE CHANGES ---
+        if (currentTicket?.id !== ticketTypeId) {
+            dateAvailability.set(new Map()); // Clear cache for new ticket type
+        }
 
+        // When tickets change, a previously selected time slot might become invalid.
+        selectedTimeSlot.set(null);
+        availableTimeSlots.set([]); // Also clear available slots
         validationErrors.update(current => ({ ...current, tickets: undefined, capacity: undefined }));
     },
 
@@ -244,7 +340,9 @@ export const bookingActions = {
     setSelectedDate(date: Date): void {
         selectedDate.set(date);
         // Reset subsequent selections to ensure a clean state.
-        selectedTicket.set(null);
+        // --- MODIFIED: DO NOT RESET TICKET SELECTION ---
+        // The user should be able to change the date after selecting a ticket.
+        // selectedTicket.set(null); 
         selectedTimeSlot.set(null);
         availableTimeSlots.set([]);
         validationErrors.update(current => ({ ...current, date: undefined }));

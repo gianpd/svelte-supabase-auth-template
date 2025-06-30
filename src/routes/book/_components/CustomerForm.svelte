@@ -3,120 +3,60 @@
 	import { customerInfo, validationErrors } from '$lib/stores/bookingStore';
 </script>
 
-<div class="customer-form-card">
-	<header class="card-header">
-		<User class="icon-primary" />
-		<h3>Your Information</h3>
+<div class="bg-cream-50 rounded-card border border-neutral-300 p-6">
+	<header class="mb-2 flex items-center gap-2">
+		<User class="text-primary-500 h-5 w-5" />
+		<h3 class="font-heading text-xl font-semibold text-neutral-800">Your Information</h3>
 	</header>
-	<p class="card-description">Please provide your contact details for the booking confirmation.</p>
+	<p class="mb-6 text-sm text-neutral-600">
+		Please provide your contact details for the booking confirmation.
+	</p>
 
-	<div class="form-fields">
+	<div class="flex flex-col gap-4">
 		<!-- Name Field -->
-		<div class="form-field">
-			<label for="customer-name">Full Name *</label>
+		<div>
+			<label for="customer-name" class="mb-1 block text-sm font-medium text-neutral-900"
+				>Full Name *</label
+			>
 			<input
 				id="customer-name"
 				type="text"
 				placeholder="Enter your full name"
 				bind:value={$customerInfo.name}
 				class:invalid={$validationErrors.name}
+				class="rounded-card focus:ring-primary-300 focus:border-primary-300 w-full border border-neutral-300 bg-white px-3 py-2 text-neutral-950 transition-all duration-200 focus:outline-none focus:ring-2"
 				required
 				aria-invalid={$validationErrors.name ? 'true' : 'false'}
 				aria-describedby="name-error"
 			/>
 			{#if $validationErrors.name}
-				<p id="name-error" class="error-text">{$validationErrors.name}</p>
+				<p id="name-error" class="text-error mt-1 text-xs">{$validationErrors.name}</p>
 			{/if}
 		</div>
 
 		<!-- Email Field -->
-		<div class="form-field">
-			<label for="customer-email">Email Address *</label>
+		<div>
+			<label for="customer-email" class="mb-1 block text-sm font-medium text-neutral-700"
+				>Email Address *</label
+			>
 			<input
 				id="customer-email"
 				type="email"
 				placeholder="Enter your email address"
 				bind:value={$customerInfo.email}
 				class:invalid={$validationErrors.email}
+				class="rounded-card focus:ring-primary-300 focus:border-primary-300 invalid:border-error invalid:focus:ring-error/50 w-full border border-neutral-300 bg-white px-3 py-2 text-neutral-950 transition-all duration-200 focus:outline-none focus:ring-2"
 				required
 				aria-invalid={$validationErrors.email ? 'true' : 'false'}
 				aria-describedby="email-error"
 			/>
 			{#if $validationErrors.email}
-				<p id="email-error" class="error-text">{$validationErrors.email}</p>
+				<p id="email-error" class="text-error mt-1 text-xs">{$validationErrors.email}</p>
 			{:else}
-				<p class="help-text">We'll send your e-tickets to this email address.</p>
+				<p class="mt-1 text-xs text-neutral-500">
+					We'll send your e-tickets to this email address.
+				</p>
 			{/if}
 		</div>
 	</div>
 </div>
-
-<style>
-	/* --- FORMS --- */
-	.customer-form-card {
-		background-color: var(--card);
-		border: 1px solid var(--border);
-		border-radius: var(--radius);
-		padding: 1.5rem;
-	}
-	.card-header {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-		margin-bottom: 0.5rem;
-	}
-	.card-header h3 {
-		font-size: 1.125rem;
-		font-weight: 600;
-	}
-	.card-description {
-		font-size: 0.875rem;
-		color: var(--muted-foreground);
-		margin-bottom: 1.5rem;
-	}
-	.form-fields {
-		display: flex;
-		flex-direction: column;
-		gap: 1rem;
-	}
-	.form-field label {
-		display: block;
-		font-size: 0.875rem;
-		font-weight: 500;
-		margin-bottom: 0.25rem;
-	}
-	.form-field input {
-		width: 100%;
-		padding: 0.5rem 0.75rem;
-		border-radius: var(--radius);
-		border: 1px solid var(--input);
-		background-color: var(--background);
-		transition: all 0.2s ease-in-out;
-	}
-	.form-field input:focus {
-		outline: 2px solid var(--ring);
-		outline-offset: 2px;
-		border-color: var(--ring);
-	}
-	.form-field input.invalid {
-		border-color: var(--destructive);
-	}
-	.form-field input.invalid:focus {
-		outline-color: var(--destructive);
-	}
-	.error-text {
-		font-size: 0.75rem;
-		color: var(--destructive);
-		margin-top: 0.25rem;
-	}
-	.help-text {
-		font-size: 0.75rem;
-		color: var(--muted-foreground);
-		margin-top: 0.25rem;
-	}
-	.icon-primary {
-		color: var(--primary);
-		width: 1.25rem;
-		height: 1.25rem;
-	}
-</style>

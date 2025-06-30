@@ -28,7 +28,9 @@
 		selectedDate,
 		selectedTimeSlot,
 		totalTickets,
-		validationErrors
+		validationErrors,
+		selectedTicket,
+		dateAvailability
 	} from '$lib/stores/bookingStore';
 
 	// Component Imports
@@ -61,6 +63,8 @@
 	// --- STATE MANAGEMENT ---
 
 	let currentStep = $state(1);
+	// --- NEW: State to track the calendar's current month/year view ---
+	let calendarDate = $state(new Date());
 
 	// --- DERIVED STATE ---
 
@@ -71,21 +75,22 @@
 			!!$customerInfo.email
 	);
 
-	// REFACTORED: The step order is now Date -> Tickets -> Time -> Details for a logical data flow.
+	// --- MODIFIED: The step order is now Ticket -> Date -> Time -> Details ---
+	// This is the most logical flow for data dependencies.
 	const steps: BookingStep[] = [
 		{
 			id: 1,
-			title: 'Select Date',
-			description: 'Choose your visit date',
-			icon: CalendarIcon,
-			isComplete: () => $selectedDate !== null
-		},
-		{
-			id: 2,
 			title: 'Select Tickets',
 			description: 'Choose your ticket type',
 			icon: Ticket,
 			isComplete: () => $totalTickets > 0
+		},
+		{
+			id: 2,
+			title: 'Select Date',
+			description: 'Choose your visit date',
+			icon: CalendarIcon,
+			isComplete: () => $selectedDate !== null
 		},
 		{
 			id: 3,
@@ -104,6 +109,19 @@
 	];
 
 	// --- EFFECTS ---
+
+	// --- NEW: Effect to load date availability ---
+	$effect(() => {
+		const ticket = $selectedTicket;
+		if (currentStep === 2 && ticket) {
+			// If we are on the date selection step and have a ticket, load availability.
+			bookingActions.loadDateAvailabilityForTicket(
+				ticket.id,
+				calendarDate.getFullYear(),
+				calendarDate.getMonth()
+			);
+		}
+	});
 
 	$effect(() => {
 		// When moving to step 3 (time selection), fetch the available time slots.
@@ -246,7 +264,7 @@
 							</div>
 							<div class="hidden text-left md:block">
 								<div class="text-sm font-semibold text-neutral-900">{step.title}</div>
-								<div class="text-xs text-neutral-500">{step.description}</div>
+								<div class="text-xs text-neutral-900">{step.description}</div>
 							</div>
 						</button>
 					</div>
@@ -275,21 +293,8 @@
 				<div
 					class="shadow-exhibit relative overflow-hidden rounded-2xl border border-neutral-100 bg-white"
 				>
-					<!-- Step 1: Date Selection -->
+					<!-- --- MODIFIED: Step 1 is now Ticket Selection --- -->
 					{#if currentStep === 1}
-						<div class="p-6 md:p-8" in:fade={{ duration: 400 }} out:fade={{ duration: 200 }}>
-							<h2 class="font-heading mb-2 text-2xl font-bold text-neutral-900">
-								Select Your Visit Date
-							</h2>
-							<p class="mb-6 text-neutral-600">
-								Choose an available date for your museum experience.
-							</p>
-							<Calendar class="w-full" on:select={goToNextStep} />
-						</div>
-					{/if}
-
-					<!-- Step 2: Ticket Selection -->
-					{#if currentStep === 2}
 						<div class="p-6 md:p-8" in:fade={{ duration: 400 }} out:fade={{ duration: 200 }}>
 							<h2 class="font-heading mb-2 text-2xl font-bold text-neutral-900">
 								Select Your Tickets
@@ -297,7 +302,30 @@
 							<p class="mb-6 text-neutral-600">
 								Choose the right experience for you or your group.
 							</p>
-							<TicketSelector language="en" class="w-full" />
+							<TicketSelector
+								language="en"
+								class="w-full text-neutral-950"
+								on:select={goToNextStep}
+							/>
+						</div>
+					{/if}
+
+					<!-- --- MODIFIED: Step 2 is now Date Selection --- -->
+					{#if currentStep === 2}
+						<div class="p-6 md:p-8" in:fade={{ duration: 400 }} out:fade={{ duration: 200 }}>
+							<h2 class="font-heading mb-2 text-2xl font-bold text-neutral-900">
+								Select Your Visit Date
+							</h2>
+							<p class="mb-6 text-neutral-600">
+								Choose an available date for your museum experience.
+							</p>
+							<Calendar
+								class="w-full"
+								on:select={goToNextStep}
+								bind:viewDate={calendarDate}
+								selectedTicketId={$selectedTicket?.id ?? null}
+								availabilityMap={$dateAvailability.get($selectedTicket?.id ?? '') ?? null}
+							/>
 						</div>
 					{/if}
 
@@ -329,7 +357,7 @@
 							<h2 class="font-heading mb-2 text-2xl font-bold text-neutral-900">
 								Your Information
 							</h2>
-							<p class="mb-6 text-neutral-600">We need a few details to complete your booking.</p>
+							<p class="mb-6 text-neutral-900">We need a few details to complete your booking.</p>
 							<CustomerForm />
 						</div>
 					{/if}
