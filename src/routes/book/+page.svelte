@@ -207,7 +207,7 @@
 				loadedMonths = new Set();
 				console.log('[Booking Debug] Reset loaded months due to ticket change');
 			}
-			lastTicketId = currentTicketId;
+			lastTicketId = currentTicketId as string;
 		}
 	});
 
