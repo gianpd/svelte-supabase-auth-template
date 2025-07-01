@@ -15,6 +15,8 @@
 * - Time slots are now loaded on-demand after a date and ticket type have been selected.
 * - State is reset hierarchically (e.g., changing date clears tickets and time) to ensure consistency.
 * - Exports key interfaces like BookingSummary for use in other components.
+* - Fixed availability data flow to ensure calendar displays visual indicators correctly.
+* - Error handling: Comprehensive error states and validation with user feedback.
 */
 
 
@@ -32,6 +34,8 @@ export interface TicketType {
     id: string;
     price: number;
     name_translations: Record<string, string>;
+    description_translations?: Record<string, string>;
+    group_size?: number;
     [key: string]: any;
 }
 
@@ -41,6 +45,7 @@ export interface TimeSlot {
     start_time: string;
     end_time: string;
     available_slots: number;
+    capacity: number;
     [key: string]: any;
 }
 
@@ -108,7 +113,7 @@ export const customerInfo: Writable<CustomerInfo> = writable({
     isGuest: true
 });
 
-// --- NEW: STATE FOR DATE AVAILABILITY CACHE ---
+// --- DATE AVAILABILITY CACHE ---
 /**
  * Caches the availability status of dates for each ticket type.
  * Structure: Map<ticketTypeId, Map<dateString (YYYY-MM-DD), DateAvailabilityStatus>>
@@ -189,9 +194,14 @@ export const bookingActions = {
         month: number,
         customFetch: typeof fetch = fetch
     ): Promise<void> {
+        console.log(`[BookingStore] Loading availability for ticket ${ticketTypeId}, ${year}-${month + 1}`);
+
         isLoadingDateAvailability.set(true);
 
-        const availabilityMap = get(dateAvailability).get(ticketTypeId) || new Map<string, DateAvailabilityStatus>();
+        // Get current availability map for this ticket type
+        const currentMap = get(dateAvailability);
+        let availabilityMap = currentMap.get(ticketTypeId) || new Map<string, DateAvailabilityStatus>();
+
         const daysInMonth = new Date(year, month + 1, 0).getDate();
         const promises: Promise<void>[] = [];
 
@@ -199,19 +209,28 @@ export const bookingActions = {
             const date = new Date(year, month, day);
             const dateString = date.toISOString().split('T')[0];
 
-            if (availabilityMap.has(dateString)) continue;
+            // Skip if we already have data for this date
+            if (availabilityMap.has(dateString)) {
+                console.log(`[BookingStore] Skipping ${dateString} - already loaded`);
+                continue;
+            }
 
+            // Set loading state
             availabilityMap.set(dateString, 'loading');
 
             const promise = apiClient.getTimeSlots(ticketTypeId, dateString, customFetch)
                 .then(timeSlots => {
-                    availabilityMap.set(dateString, timeSlots && timeSlots.length > 0 ? 'available' : 'unavailable');
+                    const hasAvailability = timeSlots && timeSlots.length > 0 &&
+                        timeSlots.some(slot => slot.available_slots > 0);
+                    const status: DateAvailabilityStatus = hasAvailability ? 'available' : 'unavailable';
+                    availabilityMap.set(dateString, status);
+                    console.log(`[BookingStore] ${dateString}: ${status} (${timeSlots?.length || 0} slots)`);
                 })
                 .catch(error => {
+                    console.error(`[BookingStore] Failed to check availability for ${dateString}:`, error);
                     if (error instanceof Error && (error.message.includes('404') || error.message.includes('No time slots found'))) {
                         availabilityMap.set(dateString, 'unavailable');
                     } else {
-                        console.error(`Failed to check availability for ${dateString}:`, error);
                         availabilityMap.set(dateString, 'unavailable');
                     }
                 });
@@ -219,9 +238,20 @@ export const bookingActions = {
             promises.push(promise);
         }
 
-        dateAvailability.update(mainMap => mainMap.set(ticketTypeId, availabilityMap));
+        // Update the store with loading states immediately
+        const updatedMap = new Map(currentMap);
+        updatedMap.set(ticketTypeId, availabilityMap);
+        dateAvailability.set(updatedMap);
+
+        // Wait for all API calls to complete
         await Promise.allSettled(promises);
-        dateAvailability.update(mainMap => mainMap.set(ticketTypeId, availabilityMap));
+
+        // Update the store with final results
+        const finalMap = new Map(get(dateAvailability));
+        finalMap.set(ticketTypeId, availabilityMap);
+        dateAvailability.set(finalMap);
+
+        console.log(`[BookingStore] Completed loading availability for ${ticketTypeId}. Map size: ${availabilityMap.size}`);
         isLoadingDateAvailability.set(false);
     },
 
@@ -231,8 +261,9 @@ export const bookingActions = {
         try {
             const ticketTypes: TicketType[] = await apiClient.getTicketTypes(customFetch);
             availableTicketTypes.set(ticketTypes);
+            console.log(`[BookingStore] Loaded ${ticketTypes.length} ticket types`);
         } catch (error) {
-            console.error('Failed to load ticket types:', error);
+            console.error('[BookingStore] Failed to load ticket types:', error);
             bookingError.set('Unable to load ticket types. Please try again.');
         } finally {
             isLoadingTicketTypes.set(false);
@@ -252,19 +283,23 @@ export const bookingActions = {
             return;
         }
 
+        console.log(`[BookingStore] Loading time slots for ${date.toISOString().split('T')[0]} and ticket ${ticket.id}`);
+
         isLoadingTimeSlots.set(true);
         bookingError.set(null);
         try {
             const dateString = date.toISOString().split('T')[0];
             const timeSlots: TimeSlot[] = await apiClient.getTimeSlots(ticket.id, dateString, customFetch);
             availableTimeSlots.set(timeSlots);
+            console.log(`[BookingStore] Loaded ${timeSlots.length} time slots`);
 
             const currentSlot = get(selectedTimeSlot);
             if (currentSlot && !timeSlots.find(slot => slot.id === currentSlot.id)) {
                 selectedTimeSlot.set(null);
+                console.log(`[BookingStore] Reset selected time slot - no longer available`);
             }
         } catch (error) {
-            console.error('Failed to load time slots:', error);
+            console.error('[BookingStore] Failed to load time slots:', error);
             if (error instanceof Error && error.message.includes('No time slots found')) {
                 availableTimeSlots.set([]);
                 bookingError.set('No available time slots for this date and ticket type. Please try a different date.');
@@ -284,16 +319,23 @@ export const bookingActions = {
      */
     updateTicketQuantity(ticketTypeId: string, quantity: number): void {
         const currentTicket = get(selectedTicket);
+        console.log(`[BookingStore] Updating ticket quantity: ${ticketTypeId} = ${quantity}`);
+
         if (quantity > 0) {
             selectedTicket.set({ id: ticketTypeId, quantity });
         } else {
             selectedTicket.set(null);
         }
+
+        // If ticket type changed, clear availability cache and dependent state
         if (currentTicket?.id !== ticketTypeId) {
-            dateAvailability.set(new Map());
+            console.log(`[BookingStore] Ticket type changed, clearing dependent state`);
+            // Don't clear the entire dateAvailability cache, just reset selection-dependent state
+            selectedDate.set(null);
+            selectedTimeSlot.set(null);
+            availableTimeSlots.set([]);
         }
-        selectedTimeSlot.set(null);
-        availableTimeSlots.set([]);
+
         validationErrors.update(current => ({ ...current, tickets: undefined, capacity: undefined }));
     },
 
@@ -302,6 +344,7 @@ export const bookingActions = {
      * @param {Date} date - The selected date.
      */
     setSelectedDate(date: Date): void {
+        console.log(`[BookingStore] Setting selected date: ${date.toISOString().split('T')[0]}`);
         selectedDate.set(date);
         selectedTimeSlot.set(null);
         availableTimeSlots.set([]);
@@ -313,6 +356,7 @@ export const bookingActions = {
      * @param {TimeSlot} timeSlot - The selected time slot object.
      */
     setSelectedTimeSlot(timeSlot: TimeSlot): void {
+        console.log(`[BookingStore] Setting selected time slot: ${timeSlot.id}`);
         selectedTimeSlot.set(timeSlot);
         validationErrors.update(current => ({ ...current, timeSlot: undefined, capacity: undefined }));
     },
@@ -349,7 +393,9 @@ export const bookingActions = {
         }
 
         validationErrors.set(errors);
-        return Object.keys(errors).length === 0;
+        const isValid = Object.keys(errors).length === 0;
+        console.log(`[BookingStore] Validation result: ${isValid ? 'VALID' : 'INVALID'}`, errors);
+        return isValid;
     },
 
     /**
@@ -383,13 +429,13 @@ export const bookingActions = {
 
             // The standalone booking endpoint is no longer the primary path.
             // This demonstrates how it *would* work if needed.
-            console.warn("Using deprecated createBooking flow. The standard flow is via the checkout/payment intent page.");
+            console.warn("[BookingStore] Using deprecated createBooking flow. The standard flow is via the checkout/payment intent page.");
             const booking = await apiClient.createBooking(bookingData, customFetch);
             // In a real scenario, we might reset state here.
             // this.resetBooking();
             return booking;
         } catch (error) {
-            console.error('Failed to create booking:', error);
+            console.error('[BookingStore] Failed to create booking:', error);
             const errorMsg = 'An error occurred while creating your booking. Please try again.';
             bookingError.set(errorMsg);
             throw error;
@@ -403,10 +449,12 @@ export const bookingActions = {
      * Also clears associated validation and error messages.
      */
     resetBooking(): void {
+        console.log(`[BookingStore] Resetting booking state`);
         selectedDate.set(null);
         selectedTimeSlot.set(null);
         selectedTicket.set(null);
         availableTimeSlots.set([]);
+        dateAvailability.set(new Map()); // Clear availability cache
         customerInfo.set({ name: '', email: '', isGuest: true });
         bookingError.set(null);
         validationErrors.set({});

@@ -1,310 +1,366 @@
-<!--
-@file Calendar Component - Interactive date selection for museum visits
-@description 
-Interactive calendar component for selecting visit dates.
-Highlights available dates based on ticket selection and prevents selection of past or unavailable periods.
-
-Key features:
-- Month/year navigation
-- Real-time availability highlighting (available, unavailable, loading)
-- Past date prevention
-- Responsive design for mobile and desktop
-- Accessibility support with keyboard navigation
-- Integration with booking store
-
-@notes
-- This version fixes all visual indicator issues.
-- The "Today" indicator is now an outlined circle around the date.
-- The availability dots are now correctly displayed and sized.
-- The legend perfectly matches the component's visual styles.
--->
-
 <script lang="ts">
-	import { ChevronLeft, ChevronRight, Calendar as CalendarIcon } from 'lucide-svelte';
-	import { bookingActions, selectedDate } from '$lib/stores/bookingStore';
+	/**
+	 * @file Calendar.svelte
+	 * @purpose A responsive and interactive calendar component for date selection.
+	 *
+	 * @dependencies
+	 * - svelte: For component logic, transitions, and creating event dispatchers.
+	 * - lucide-svelte: For icons.
+	 * - $lib/stores/bookingStore: For type definitions.
+	 *
+	 * @notes
+	 * - Manages its own internal state for the currently displayed month and year.
+	 * - Calls onSelect callback when a valid date is clicked.
+	 * - Calls onMonthChange callback when the user navigates to the next/previous month.
+	 * - Disables dates that are in the past or marked as 'unavailable' or 'loading' in the `availabilityMap`.
+	 * - Uses callback props instead of event dispatchers for Svelte 5 compatibility.
+	 * - Fixed visual indicators to clearly show availability status to users.
+	 * - Error handling: Properly displays loading, available, and unavailable states.
+	 */
+	import { ChevronLeft, ChevronRight, Loader2 } from 'lucide-svelte';
 	import type { DateAvailabilityStatus } from '$lib/stores/bookingStore';
 
-	// --- TYPE DEFINITIONS ---
-
-	interface DayInfo {
-		date: Date;
-		dateString: string;
-		day: number;
-		isToday: boolean;
-		isSelected: boolean;
-		isPast: boolean;
-		isDisabled: boolean;
-		availability: DateAvailabilityStatus;
-	}
-
-	interface Props {
-		class?: string;
-		disabled?: boolean;
-		viewDate: Date; // Bound from parent to control the calendar's month/year
-		selectedTicketId?: string | null; // The currently selected ticket type
-		availabilityMap?: Map<string, DateAvailabilityStatus> | null; // Cached availability data
-	}
-
 	// --- PROPS ---
+	interface Props {
+		selectedDate?: Date | null;
+		availabilityMap?: Map<string, DateAvailabilityStatus> | null;
+		selectedTicketId?: string | null;
+		class?: string;
+		onSelect?: (date: Date) => void;
+		onMonthChange?: (date: Date) => void;
+	}
 
 	let {
-		class: className = '',
-		disabled = false,
-		viewDate = $bindable(),
+		selectedDate = null,
+		availabilityMap = null,
 		selectedTicketId = null,
-		availabilityMap = null
+		class: className = '',
+		onSelect,
+		onMonthChange
 	}: Props = $props();
 
-	// --- REACTIVE STATE ---
+	// --- STATE ---
+	let viewDate = $state(new Date());
+	let days = $state<
+		Array<{
+			date: Date;
+			isCurrentMonth: boolean;
+			isToday: boolean;
+			isSelected: boolean;
+			availabilityStatus: DateAvailabilityStatus;
+		}>
+	>([]);
+	let isInitialized = $state(false);
 
-	let today = $state(new Date());
+	const today = new Date();
+	today.setHours(0, 0, 0, 0); // Normalize today's date
 
-	// Derived state for calendar display, driven by the `viewDate` prop
-	let currentMonth = $derived(viewDate.getMonth());
-	let currentYear = $derived(viewDate.getFullYear());
-	let displayDate = $derived(new Date(currentYear, currentMonth, 1));
-	let monthName = $derived(displayDate.toLocaleDateString('en', { month: 'long' }));
-	let daysInMonth = $derived(new Date(currentYear, currentMonth + 1, 0).getDate());
-	let firstDayOfMonth = $derived(new Date(currentYear, currentMonth, 1).getDay());
+	// --- DERIVED STATE & HELPERS ---
+	const monthName = $derived(
+		viewDate.toLocaleString('default', { month: 'long', year: 'numeric' })
+	);
 
-	// --- LOGIC ---
+	/**
+	 * Get the availability status for a given date
+	 * @param date - The date to check
+	 * @returns The availability status
+	 */
+	function getAvailabilityStatus(date: Date): DateAvailabilityStatus {
+		if (date < today) return 'unavailable';
+		if (!selectedTicketId || !availabilityMap) return 'unknown';
 
-	// Generate the grid of days for the current month view
-	let calendarDays = $derived(() => {
-		const days: (DayInfo | null)[] = [];
-		const now = new Date();
-		now.setHours(0, 0, 0, 0); // Use start of today for accurate past-date checking
+		const dateString = date.toISOString().split('T')[0];
+		const status = availabilityMap.get(dateString);
 
-		for (let i = 0; i < firstDayOfMonth; i++) days.push(null);
+		// Debug logging to help troubleshoot
+		if (date.getDate() === 1 && date.getMonth() === viewDate.getMonth()) {
+			console.log(
+				`[Calendar Debug] Date: ${dateString}, Status: ${status}, Map size: ${availabilityMap.size}`
+			);
+		}
 
-		for (let day = 1; day <= daysInMonth; day++) {
-			const date = new Date(currentYear, currentMonth, day);
-			const dateString = date.toISOString().split('T')[0];
-			const isPast = date < now;
+		return status || 'unknown';
+	}
 
-			let availability: DateAvailabilityStatus = 'unknown';
-			if (selectedTicketId && availabilityMap) {
-				availability = availabilityMap.get(dateString) ?? 'unknown';
-			}
+	/**
+	 * Generates the calendar grid for the given date
+	 * @param date - The date to generate the calendar for
+	 * @param currentSelectedDate - The currently selected date for highlighting
+	 */
+	function generateCalendar(date: Date, currentSelectedDate: Date | null = null) {
+		const year = date.getFullYear();
+		const month = date.getMonth();
+		const firstDayOfMonth = new Date(year, month, 1);
+		const lastDayOfMonth = new Date(year, month + 1, 0);
+		const daysInMonth = lastDayOfMonth.getDate();
+		const startDayOfWeek = firstDayOfMonth.getDay(); // 0 (Sun) - 6 (Sat)
 
-			const isSelectable = !disabled && !isPast && availability === 'available';
+		const newDays = [];
 
-			days.push({
-				date,
-				dateString,
-				day,
-				isToday: isSameDay(date, today),
-				isSelected: !!($selectedDate && isSameDay(date, $selectedDate)),
-				isPast,
-				availability,
-				isDisabled: !isSelectable
+		// Previous month's days
+		for (let i = 0; i < startDayOfWeek; i++) {
+			const d = new Date(year, month, 1 - (startDayOfWeek - i));
+			newDays.push({
+				date: d,
+				isCurrentMonth: false,
+				isToday: false,
+				isSelected: false,
+				availabilityStatus: 'unavailable' as DateAvailabilityStatus
 			});
 		}
-		return days;
-	});
 
-	// Helper function to determine the CSS classes for a day cell.
-	function getDayClasses(dayInfo: DayInfo): string {
-		const classes: string[] = [];
+		// Current month's days
+		for (let i = 1; i <= daysInMonth; i++) {
+			const d = new Date(year, month, i);
+			const availability = getAvailabilityStatus(d);
+			newDays.push({
+				date: d,
+				isCurrentMonth: true,
+				isToday: d.getTime() === today.getTime(),
+				isSelected: currentSelectedDate ? d.getTime() === currentSelectedDate.getTime() : false,
+				availabilityStatus: availability
+			});
+		}
 
-		if (dayInfo.isSelected) {
-			classes.push('bg-primary-600 hover:bg-primary-700 text-white font-semibold');
+		// Next month's days
+		const gridCells = 42; // 6 weeks * 7 days
+		const remainingCells = gridCells - newDays.length;
+		for (let i = 1; i <= remainingCells; i++) {
+			const d = new Date(year, month + 1, i);
+			newDays.push({
+				date: d,
+				isCurrentMonth: false,
+				isToday: false,
+				isSelected: false,
+				availabilityStatus: 'unavailable' as DateAvailabilityStatus
+			});
+		}
+
+		days = newDays;
+	}
+
+	/**
+	 * Navigate to the previous month
+	 */
+	function previousMonth() {
+		const newDate = new Date(viewDate.setMonth(viewDate.getMonth() - 1));
+		viewDate = newDate;
+		generateCalendar(viewDate, selectedDate);
+		onMonthChange?.(newDate);
+	}
+
+	/**
+	 * Navigate to the next month
+	 */
+	function nextMonth() {
+		const newDate = new Date(viewDate.setMonth(viewDate.getMonth() + 1));
+		viewDate = newDate;
+		generateCalendar(viewDate, selectedDate);
+		onMonthChange?.(newDate);
+	}
+
+	/**
+	 * Select a date if it's available
+	 * @param day - The day object containing date and availability info
+	 */
+	function selectDate(day: (typeof days)[0]) {
+		if (day.date < today || day.availabilityStatus !== 'available' || !day.isCurrentMonth) {
+			return; // Do not select past, unavailable dates, or dates from other months
+		}
+		onSelect?.(day.date);
+	}
+
+	/**
+	 * Get CSS classes for a day based on its availability status
+	 * @param day - The day object
+	 * @returns CSS class string
+	 */
+	function getDayClasses(day: (typeof days)[0]): string {
+		const baseClasses = 'relative h-10 w-10 rounded-full transition-all duration-200 font-medium';
+
+		// Base text color
+		let classes = baseClasses;
+
+		if (!day.isCurrentMonth) {
+			classes += ' text-neutral-300 cursor-not-allowed';
+		} else if (day.isSelected) {
+			classes += ' bg-primary-600 text-white font-bold border-2 border-primary-600';
+		} else if (day.isToday && day.availabilityStatus === 'available') {
+			classes += ' border-2 border-primary-500 text-primary-600 font-bold hover:bg-primary-50';
+		} else if (day.isToday) {
+			classes += ' border-2 border-neutral-400 text-neutral-600 font-bold';
 		} else {
-			if (dayInfo.isPast) {
-				classes.push('text-neutral-300');
-			} else if (dayInfo.availability === 'unavailable') {
-				classes.push('text-neutral-400 line-through');
-			} else if (dayInfo.availability === 'loading') {
-				classes.push('text-neutral-500 animate-pulse');
-			} else if (dayInfo.availability === 'available') {
-				classes.push('text-neutral-900 hover:bg-primary-50');
-			} else {
-				// Fallback for 'unknown' state (e.g., before ticket is selected)
-				classes.push('text-neutral-400');
+			// Style based on availability
+			switch (day.availabilityStatus) {
+				case 'available':
+					classes +=
+						' text-neutral-800 hover:bg-primary-100 hover:text-primary-700 cursor-pointer border border-transparent hover:border-primary-300';
+					break;
+				case 'unavailable':
+					classes += ' text-neutral-400 cursor-not-allowed bg-neutral-100';
+					break;
+				case 'loading':
+					classes += ' text-neutral-600 cursor-wait';
+					break;
+				case 'unknown':
+				default:
+					classes += ' text-neutral-500 cursor-not-allowed opacity-60';
+					break;
 			}
 		}
 
-		if (dayInfo.isDisabled) {
-			classes.push('cursor-not-allowed');
-		} else {
-			classes.push('focus:ring-primary-500 cursor-pointer focus:ring-2');
-		}
-
-		return classes.join(' ');
+		return classes;
 	}
 
-	function isSameDay(date1: Date, date2: Date): boolean {
-		return date1.toDateString() === date2.toDateString();
-	}
-
-	// --- ACTIONS ---
-
-	function previousMonth(): void {
-		viewDate = new Date(currentYear, currentMonth - 1, 1);
-	}
-
-	function nextMonth(): void {
-		viewDate = new Date(currentYear, currentMonth + 1, 1);
-	}
-
-	async function selectDate(dayInfo: DayInfo | null): Promise<void> {
-		if (!dayInfo || dayInfo.isDisabled) return;
-		await bookingActions.setSelectedDate(dayInfo.date);
-	}
-
-	function handleKeydown(event: KeyboardEvent, dayInfo: DayInfo | null): void {
-		if (event.key === 'Enter' || event.key === ' ') {
-			event.preventDefault();
-			selectDate(dayInfo);
-		}
-	}
-
-	// --- EFFECTS ---
-
+	// --- INITIALIZATION EFFECT ---
+	// Single effect to handle initialization and updates
 	$effect(() => {
-		today = new Date();
-		today.setHours(0, 0, 0, 0);
+		// Initialize viewDate on first render or when selectedDate changes significantly
+		if (!isInitialized) {
+			const initialDate = selectedDate || new Date();
+			viewDate = new Date(initialDate.getFullYear(), initialDate.getMonth(), 1);
+			isInitialized = true;
+		}
+
+		// Always regenerate calendar when viewDate, selectedDate, or availabilityMap changes
+		generateCalendar(viewDate, selectedDate);
+	});
+
+	// --- PROP CHANGE EFFECT ---
+	// Handle external selectedDate changes that should update the view
+	$effect(() => {
+		const currentSelectedDate = selectedDate;
+		if (currentSelectedDate && isInitialized) {
+			const selectedYear = currentSelectedDate.getFullYear();
+			const selectedMonth = currentSelectedDate.getMonth();
+			const currentYear = viewDate.getFullYear();
+			const currentMonth = viewDate.getMonth();
+
+			// Only update viewDate if we're looking at a different month/year
+			if (selectedYear !== currentYear || selectedMonth !== currentMonth) {
+				viewDate = new Date(selectedYear, selectedMonth, 1);
+			}
+		}
+	});
+
+	// --- AVAILABILITY MAP CHANGE EFFECT ---
+	// Regenerate calendar when availability data changes
+	$effect(() => {
+		if (availabilityMap && isInitialized) {
+			generateCalendar(viewDate, selectedDate);
+		}
 	});
 </script>
 
-<div class="calendar shadow-medium rounded-lg border border-neutral-200 bg-white {className}">
+<div class="rounded-lg border border-neutral-200 bg-white p-4 {className}">
 	<!-- Calendar Header -->
-	<div class="calendar-header flex items-center justify-between border-b border-neutral-200 p-4">
+	<div class="mb-4 flex items-center justify-between">
 		<button
 			type="button"
-			on:click={previousMonth}
-			class="nav-button focus:ring-primary-500 rounded-md p-2 transition-colors hover:bg-neutral-100 focus:outline-none focus:ring-2"
+			class="rounded-full p-2 text-neutral-500 transition-colors hover:bg-neutral-100 hover:text-neutral-800"
+			onclick={previousMonth}
 			aria-label="Previous month"
-			{disabled}
 		>
-			<ChevronLeft class="h-5 w-5 text-neutral-600" />
+			<ChevronLeft class="h-5 w-5" />
 		</button>
-		<div class="month-year flex items-center space-x-2">
-			<CalendarIcon class="text-primary-600 h-5 w-5" />
-			<h2 class="text-lg font-semibold text-neutral-900">{monthName} {currentYear}</h2>
-		</div>
+		<h3 class="w-40 text-center font-semibold text-neutral-800">{monthName}</h3>
 		<button
 			type="button"
-			on:click={nextMonth}
-			class="nav-button focus:ring-primary-500 rounded-md p-2 transition-colors hover:bg-neutral-100 focus:outline-none focus:ring-2"
+			class="rounded-full p-2 text-neutral-500 transition-colors hover:bg-neutral-100 hover:text-neutral-800"
+			onclick={nextMonth}
 			aria-label="Next month"
-			{disabled}
 		>
-			<ChevronRight class="h-5 w-5 text-neutral-600" />
+			<ChevronRight class="h-5 w-5" />
 		</button>
 	</div>
 
-	<!-- Day Labels -->
-	<div class="day-labels grid grid-cols-7 gap-0 border-b border-neutral-200">
-		{#each ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as dayLabel}
-			<div class="day-label bg-neutral-50 p-3 text-center text-sm font-medium text-neutral-500">
-				{dayLabel}
-			</div>
-		{/each}
-	</div>
+	<!-- Availability Status Debug Info (remove in production) -->
+	{#if selectedTicketId && availabilityMap}
+		<div class="mb-2 text-xs text-neutral-500">
+			Debug: Ticket {selectedTicketId}, Map size: {availabilityMap.size}
+		</div>
+	{/if}
 
 	<!-- Calendar Grid -->
-	<div class="calendar-grid grid grid-cols-7 gap-0">
-		{#each calendarDays() as dayInfo}
-			{#if dayInfo}
+	<div class="grid grid-cols-7 gap-1 text-center text-sm">
+		<!-- Day Headers -->
+		{#each ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as day}
+			<div class="py-2 font-medium text-neutral-500">{day}</div>
+		{/each}
+
+		<!-- Dates -->
+		{#each days as day (day.date.getTime())}
+			<div class="relative flex items-center justify-center p-1">
 				<button
 					type="button"
-					class="day-cell relative flex h-14 items-center justify-center p-3 text-sm transition-all duration-200 focus:z-10 focus:outline-none {getDayClasses(
-						dayInfo
-					)}"
-					on:click={() => selectDate(dayInfo)}
-					on:keydown={(e) => handleKeydown(e, dayInfo)}
-					disabled={dayInfo.isDisabled}
-					aria-label={dayInfo.isDisabled
-						? `${dayInfo.date.toLocaleDateString()} - Unavailable`
-						: `Select ${dayInfo.date.toLocaleDateString()}`}
-					aria-selected={dayInfo.isSelected}
-					tabindex={dayInfo.isDisabled ? -1 : 0}
+					class={getDayClasses(day)}
+					onclick={() => selectDate(day)}
+					disabled={!day.isCurrentMonth ||
+						day.availabilityStatus !== 'available' ||
+						day.date < today}
+					title={`${day.date.toLocaleDateString()} - ${day.availabilityStatus}`}
 				>
-					<span class="day-number relative z-10">{dayInfo.day}</span>
+					{#if day.availabilityStatus === 'loading'}
+						<Loader2 class="text-primary-500 absolute inset-0 m-auto h-4 w-4 animate-spin" />
+					{:else}
+						{day.date.getDate()}
+					{/if}
 
-					<!-- "Today" indicator (outlined circle) -->
-					{#if dayInfo.isToday && !dayInfo.isSelected}
+					<!-- Small availability indicator dot -->
+					{#if day.isCurrentMonth && day.availabilityStatus === 'available' && !day.isSelected}
+						<div class="absolute bottom-0 right-0 h-1.5 w-1.5 rounded-full bg-green-500"></div>
+					{:else if day.isCurrentMonth && day.availabilityStatus === 'unavailable'}
+						<div class="absolute bottom-0 right-0 h-1.5 w-1.5 rounded-full bg-red-500"></div>
+					{:else if day.isCurrentMonth && day.availabilityStatus === 'loading'}
 						<div
-							class="border-accent-500 pointer-events-none absolute left-1/2 top-1/2 h-9 w-9 -translate-x-1/2 -translate-y-1/2 rounded-full border-2"
-							aria-hidden="true"
+							class="absolute bottom-0 right-0 h-1.5 w-1.5 animate-pulse rounded-full bg-yellow-500"
 						></div>
 					{/if}
-
-					<!-- Availability indicator dot -->
-					{#if !dayInfo.isPast && selectedTicketId && dayInfo.availability !== 'loading' && !dayInfo.isSelected}
-						{#if dayInfo.availability === 'available'}
-							<div
-								class="bg-primary-600 absolute bottom-2 left-1/2 h-2 w-2 -translate-x-1/2 transform rounded-full"
-								aria-hidden="true"
-							></div>
-						{:else if dayInfo.availability === 'unavailable'}
-							<div
-								class="bg-error absolute bottom-2 left-1/2 h-2 w-2 -translate-x-1/2 transform rounded-full"
-								aria-hidden="true"
-							></div>
-						{/if}
-					{/if}
 				</button>
-			{:else}
-				<div class="day-cell-empty h-14 p-3"></div>
-			{/if}
+			</div>
 		{/each}
 	</div>
 
-	<!-- Footer with legend -->
-	<div class="calendar-footer border-t border-neutral-200 bg-neutral-50 p-4">
-		<div class="flex flex-wrap items-center justify-between gap-2 text-xs text-neutral-600">
-			<div class="flex items-center space-x-4">
-				<div class="flex items-center space-x-1.5">
-					<div class="bg-primary-600 h-2 w-2 rounded-full"></div>
-					<span>Available</span>
-				</div>
-				<div class="flex items-center space-x-1.5">
-					<div class="bg-error h-2 w-2 rounded-full"></div>
-					<span>Unavailable</span>
-				</div>
-				<div class="flex items-center space-x-1.5">
-					<div class="border-accent-600 h-2 w-2 rounded-full border"></div>
-					<span>Today</span>
-				</div>
-			</div>
-			{#if $selectedDate}
-				<div class="text-primary-700 font-medium">
-					Selected: {$selectedDate.toLocaleDateString()}
-				</div>
-			{/if}
+	<!-- Legend -->
+	<div class="mt-4 flex items-center justify-center space-x-6 text-xs text-neutral-600">
+		<div class="flex items-center space-x-1">
+			<span class="bg-primary-600 h-3 w-3 rounded-full"></span>
+			<span>Selected</span>
+		</div>
+		<div class="flex items-center space-x-1">
+			<span class="h-3 w-3 rounded-full bg-green-500"></span>
+			<span>Available</span>
+		</div>
+		<div class="flex items-center space-x-1">
+			<span class="h-3 w-3 rounded-full bg-red-500"></span>
+			<span>Unavailable</span>
+		</div>
+		<div class="flex items-center space-x-1">
+			<span class="h-3 w-3 rounded-full bg-yellow-500"></span>
+			<span>Loading</span>
 		</div>
 	</div>
-</div>
 
-<style>
-	.calendar {
-		min-width: 320px;
-		max-width: 100%;
-	}
-	.day-cell {
-		aspect-ratio: 1;
-		min-height: 56px;
-	}
-	.day-cell:hover:not(:disabled) {
-		transform: translateY(-1px);
-		box-shadow:
-			0 4px 6px -1px rgb(0 0 0 / 0.1),
-			0 2px 4px -2px rgb(0 0 0 / 0.1);
-	}
-	.day-cell:focus-visible {
-		outline: 2px solid #2563eb;
-		outline-offset: -2px;
-	}
-	.day-cell {
-		transition:
-			all 0.2s cubic-bezier(0.4, 0, 0.2, 1),
-			transform 0.1s ease-out;
-	}
-	@media (max-width: 640px) {
-		.day-cell {
-			min-height: 48px;
-		}
-	}
-</style>
+	<!-- Availability Summary -->
+	{#if selectedTicketId && availabilityMap && availabilityMap.size > 0}
+		{@const currentMonthDays = days.filter((d) => d.isCurrentMonth)}
+		{@const availableDays = currentMonthDays.filter(
+			(d) => d.availabilityStatus === 'available'
+		).length}
+		{@const unavailableDays = currentMonthDays.filter(
+			(d) => d.availabilityStatus === 'unavailable'
+		).length}
+		{@const loadingDays = currentMonthDays.filter((d) => d.availabilityStatus === 'loading').length}
+
+		<div class="mt-4 rounded-md bg-neutral-50 p-3 text-center text-sm text-neutral-600">
+			<div class="mb-1 font-medium">This Month Summary</div>
+			<div class="flex justify-center space-x-4 text-xs">
+				<span class="text-green-600">{availableDays} Available</span>
+				<span class="text-red-600">{unavailableDays} Unavailable</span>
+				{#if loadingDays > 0}
+					<span class="text-yellow-600">{loadingDays} Loading</span>
+				{/if}
+			</div>
+		</div>
+	{/if}
+</div>

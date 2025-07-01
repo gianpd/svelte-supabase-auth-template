@@ -24,6 +24,8 @@ Key features:
 - Fully booked slots are visually disabled
 - Times are displayed in user's local timezone
 - Supports both click and keyboard interaction
+- Fixed selection issues by improving slot validation and interaction
+- Error handling: Proper validation of slot availability and user selection
 -->
 
 <script lang="ts">
@@ -45,19 +47,25 @@ Key features:
 		class?: string;
 		disabled?: boolean;
 		showCapacity?: boolean;
+		onselect?: () => void;
 	}
 
 	// Props for customization
-	let { class: className = '', disabled = false, showCapacity = true }: Props = $props();
+	let { class: className = '', disabled = false, showCapacity = true, onselect }: Props = $props();
 
 	// Format time for display
 	function formatTime(timeString: string): string {
-		const date = new Date(timeString);
-		return date.toLocaleTimeString('en', {
-			hour: '2-digit',
-			minute: '2-digit',
-			hour12: true
-		});
+		try {
+			const date = new Date(timeString);
+			return date.toLocaleTimeString('en', {
+				hour: '2-digit',
+				minute: '2-digit',
+				hour12: true
+			});
+		} catch (error) {
+			console.error('[TimeSlotPicker] Error formatting time:', timeString, error);
+			return timeString;
+		}
 	}
 
 	// Format time range for display
@@ -67,11 +75,33 @@ Key features:
 
 	// Check if a time slot is selectable
 	function isSlotSelectable(timeSlot: TimeSlot): boolean {
-		if (disabled) return false;
-		if (timeSlot.available_slots <= 0) return false;
+		console.log('[TimeSlotPicker] Checking slot selectability:', {
+			timeSlotId: timeSlot.id,
+			disabled,
+			availableSlots: timeSlot.available_slots,
+			totalTickets: $totalTickets,
+			capacity: timeSlot.capacity
+		});
 
-		const currentTickets: number = $totalTickets;
-		return timeSlot.available_slots >= currentTickets;
+		if (disabled) {
+			console.log('[TimeSlotPicker] Slot not selectable: component disabled');
+			return false;
+		}
+
+		if (timeSlot.available_slots <= 0) {
+			console.log('[TimeSlotPicker] Slot not selectable: no available slots');
+			return false;
+		}
+
+		const currentTickets = $totalTickets;
+		if (currentTickets <= 0) {
+			console.log('[TimeSlotPicker] Slot not selectable: no tickets selected');
+			return false;
+		}
+
+		const canAccommodate = timeSlot.available_slots >= currentTickets;
+		console.log('[TimeSlotPicker] Slot selectable:', canAccommodate);
+		return canAccommodate;
 	}
 
 	// Get capacity status for styling
@@ -88,13 +118,13 @@ Key features:
 	function getCapacityClasses(status: string): string {
 		switch (status) {
 			case 'full':
-				return 'text-error bg-error/10 border-error/20';
+				return 'text-red-600 bg-red-50 border-red-200';
 			case 'low':
-				return 'text-warning bg-warning/10 border-warning/20';
+				return 'text-amber-600 bg-amber-50 border-amber-200';
 			case 'medium':
-				return 'text-accent-600 bg-accent-50 border-accent-200';
+				return 'text-blue-600 bg-blue-50 border-blue-200';
 			case 'high':
-				return 'text-success bg-success/10 border-success/20';
+				return 'text-green-600 bg-green-50 border-green-200';
 			default:
 				return 'text-neutral-600 bg-neutral-50 border-neutral-200';
 		}
@@ -102,8 +132,24 @@ Key features:
 
 	// Handle time slot selection
 	function selectTimeSlot(timeSlot: TimeSlot): void {
-		if (!isSlotSelectable(timeSlot)) return;
+		console.log('[TimeSlotPicker] Attempting to select time slot:', timeSlot.id);
+
+		if (!isSlotSelectable(timeSlot)) {
+			console.log('[TimeSlotPicker] Time slot not selectable, aborting');
+			return;
+		}
+
+		console.log('[TimeSlotPicker] Selecting time slot:', timeSlot.id);
 		bookingActions.setSelectedTimeSlot(timeSlot);
+
+		// Call onselect callback if provided
+		if (onselect) {
+			// Use setTimeout to avoid calling during reactive update
+			setTimeout(() => {
+				console.log('[TimeSlotPicker] Calling onselect callback');
+				onselect?.();
+			}, 0);
+		}
 	}
 
 	// Keyboard navigation
@@ -135,6 +181,11 @@ Key features:
 		{/if}
 	</div>
 
+	<!-- Debug Information -->
+	<div class="mb-4 rounded bg-neutral-50 p-2 text-xs text-neutral-500">
+		Debug: Total tickets: {$totalTickets}, Available slots: {$availableTimeSlots.length}, Loading: {$isLoadingTimeSlots}
+	</div>
+
 	<!-- Loading State -->
 	{#if $isLoadingTimeSlots}
 		<div class="loading-state flex flex-col items-center justify-center space-y-3 py-12">
@@ -145,11 +196,11 @@ Key features:
 		<!-- Error State -->
 	{:else if $bookingError}
 		<div class="error-state flex flex-col items-center justify-center space-y-3 py-12">
-			<AlertCircle class="text-error h-8 w-8" />
-			<p class="text-error text-center">{$bookingError}</p>
+			<AlertCircle class="h-8 w-8 text-red-600" />
+			<p class="text-center text-red-600">{$bookingError}</p>
 			<button
 				type="button"
-				class="btn-secondary text-sm"
+				class="rounded-md bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-700"
 				on:click={() => bookingActions.clearErrors()}
 			>
 				Try Again
@@ -192,7 +243,7 @@ Key features:
                         {isSelected
 						? 'border-primary-600 bg-primary-50 shadow-md'
 						: isSelectable
-							? 'hover:border-primary-300 hover:shadow-medium border-neutral-200 bg-white hover:-translate-y-0.5'
+							? 'hover:border-primary-300 cursor-pointer border-neutral-200 bg-white hover:-translate-y-0.5 hover:shadow-md'
 							: 'cursor-not-allowed border-neutral-200 bg-neutral-50 opacity-60'}"
 					on:click={() => selectTimeSlot(timeSlot)}
 					on:keydown={(e) => handleKeydown(e, timeSlot)}
@@ -209,10 +260,10 @@ Key features:
 
 					<!-- Capacity Information -->
 					{#if showCapacity}
-						<div class="capacity-info flex items-center justify-between">
+						<div class="capacity-info mb-2 flex items-center justify-between">
 							<div class="flex items-center space-x-1">
 								<Users class="h-4 w-4 text-neutral-500" />
-								<span class="text-sm text-neutral-600"> Capacity </span>
+								<span class="text-sm text-neutral-600">Capacity</span>
 							</div>
 
 							<div
@@ -228,13 +279,13 @@ Key features:
 						<!-- Availability Status -->
 						<div class="availability-status text-xs">
 							{#if capacityStatus === 'full'}
-								<span class="text-error font-medium">Fully Booked</span>
+								<span class="font-medium text-red-600">Fully Booked</span>
 							{:else if capacityStatus === 'low'}
-								<span class="text-warning font-medium">Few Spots Left</span>
+								<span class="font-medium text-amber-600">Few Spots Left</span>
 							{:else if capacityStatus === 'medium'}
-								<span class="text-accent-600 font-medium">Good Availability</span>
+								<span class="font-medium text-blue-600">Good Availability</span>
 							{:else}
-								<span class="text-success font-medium">Available</span>
+								<span class="font-medium text-green-600">Available</span>
 							{/if}
 						</div>
 
@@ -246,14 +297,17 @@ Key features:
 
 					<!-- Insufficient Capacity Warning -->
 					{#if $totalTickets > 0 && timeSlot.available_slots < $totalTickets && timeSlot.available_slots > 0}
-						<div
-							class="capacity-warning bg-warning/10 border-warning/20 mt-2 rounded-md border p-2"
-						>
-							<p class="text-warning text-xs">
+						<div class="capacity-warning mt-2 rounded-md border border-amber-200 bg-amber-50 p-2">
+							<p class="text-xs text-amber-600">
 								Only {timeSlot.available_slots} spots available (you need {$totalTickets})
 							</p>
 						</div>
 					{/if}
+
+					<!-- Selectability Debug -->
+					<div class="debug-info mt-2 text-xs text-neutral-400">
+						Debug: Selectable={isSelectable}, Available={timeSlot.available_slots}, Need={$totalTickets}
+					</div>
 				</button>
 			{/each}
 		</div>
@@ -322,5 +376,14 @@ Key features:
 		50% {
 			opacity: 0.5;
 		}
+	}
+
+	/* Ensure clickable appearance for selectable slots */
+	.time-slot-card:not(:disabled) {
+		cursor: pointer;
+	}
+
+	.time-slot-card:disabled {
+		cursor: not-allowed;
 	}
 </style>

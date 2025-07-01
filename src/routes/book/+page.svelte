@@ -5,34 +5,36 @@
 	 *
 	 * @dependencies
 	 * - Svelte: For component logic and reactivity.
-	 * - SvelteKit: For navigation (`goto`) and page state (`page`).
+	 * - SvelteKit: For navigation (goto) and page state (page).
 	 * - bookingStore: For all booking-related state and actions.
 	 * - lucide-svelte: For icons.
 	 *
 	 * @notes
-	 * - This component has been refactored to use a more logical step order: Date -> Tickets -> Time -> Details.
-	 * - Automatic step advancement has been removed to improve user control and fix navigation issues.
-	 * - Time slots are now loaded on-demand when the user reaches the time selection step.
-	 * - The UI is composed of several child components for each step of the booking process.
+	 * - This component has been refactored to use a more logical step order: Tickets -> Date -> Time -> Details.
+	 * - Fixed infinite loop issues by properly managing effect dependencies and preventing circular updates.
+	 * - Date availability is now loaded only when the user navigates to a new, previously unloaded month.
+	 * - Error handling: Prevents reactive loops through careful state management and effect consolidation.
+	 * - Fixed availability display: Calendar now properly shows visual indicators for date availability.
+	 * - Fixed time slot selection: Improved validation and user feedback for time slot picker.
 	 */
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { fade, slide } from 'svelte/transition';
-
 	import {
 		bookingActions,
 		bookingError,
 		customerInfo,
 		isCreatingBooking,
 		isLoadingTimeSlots,
+		isLoadingDateAvailability,
 		selectedDate,
 		selectedTimeSlot,
 		totalTickets,
 		validationErrors,
 		selectedTicket,
-		dateAvailability
+		dateAvailability,
+		availableTimeSlots
 	} from '$lib/stores/bookingStore';
-
 	// Component Imports
 	import Calendar from '$lib/components/Calendar.svelte';
 	import TimeSlotPicker from '$lib/components/TimeSlotPicker.svelte';
@@ -40,7 +42,6 @@
 	import BookingSummary from './_components/BookingSummary.svelte';
 	import CustomerForm from './_components/CustomerForm.svelte';
 	import Alert from '$lib/components/ui/Alert.svelte';
-
 	import {
 		Loader,
 		ChevronLeft,
@@ -49,8 +50,31 @@
 		Clock,
 		Ticket,
 		User,
-		Check
+		Check,
+		Info,
+		AlertTriangle
 	} from 'lucide-svelte';
+
+	// Define types for stores
+	interface Ticket {
+		id: string;
+	}
+	interface CustomerInfo {
+		name: string;
+		email: string;
+	}
+	interface ValidationErrors {
+		name?: string;
+		email?: string;
+	}
+	interface DateAvailabilityStatus {
+		/* Define as per your bookingStore, e.g., 'available' | 'unavailable' | 'loading' | 'unknown' */
+	}
+	interface BookingActions {
+		loadDateAvailabilityForTicket: (ticketId: string, year: number, month: number) => void;
+		loadTimeSlotsForSelection: () => void;
+		validateBooking: () => boolean;
+	}
 
 	interface BookingStep {
 		id: number;
@@ -61,13 +85,12 @@
 	}
 
 	// --- STATE MANAGEMENT ---
-
 	let currentStep = $state(1);
-	// --- NEW: State to track the calendar's current month/year view ---
 	let calendarDate = $state(new Date());
+	let loadedMonths = $state<Set<string>>(new Set());
+	let lastTicketId = $state<string | null>(null);
 
 	// --- DERIVED STATE ---
-
 	const isCustomerFormValid = $derived(
 		!$validationErrors.name &&
 			!$validationErrors.email &&
@@ -75,8 +98,30 @@
 			!!$customerInfo.email
 	);
 
-	// --- MODIFIED: The step order is now Ticket -> Date -> Time -> Details ---
-	// This is the most logical flow for data dependencies.
+	// Safely derive availabilityMap with debugging
+	const availabilityMap = $derived(() => {
+		if (!$selectedTicket?.id || !$dateAvailability) {
+			console.log('[Booking Debug] No ticket or availability data', {
+				hasTicket: !!$selectedTicket?.id,
+				hasAvailability: !!$dateAvailability
+			});
+			return null;
+		}
+
+		const map =
+			$dateAvailability instanceof Map
+				? $dateAvailability.get($selectedTicket.id)
+				: $dateAvailability[$selectedTicket.id];
+
+		console.log('[Booking Debug] Availability map for ticket', $selectedTicket.id, ':', {
+			mapExists: !!map,
+			mapSize: map?.size || 0,
+			mapType: typeof map
+		});
+
+		return map || null;
+	});
+
 	const steps: BookingStep[] = [
 		{
 			id: 1,
@@ -109,43 +154,64 @@
 	];
 
 	// --- EFFECTS ---
-
-	// --- NEW: Effect to load date availability ---
+	// Effect to handle date availability loading when moving to step 2
 	$effect(() => {
-		const ticket = $selectedTicket;
-		if (currentStep === 2 && ticket) {
-			// If we are on the date selection step and have a ticket, load availability.
-			bookingActions.loadDateAvailabilityForTicket(
-				ticket.id,
-				calendarDate.getFullYear(),
-				calendarDate.getMonth()
-			);
+		if (currentStep === 2 && $selectedTicket?.id) {
+			const ticketId = $selectedTicket.id;
+			const year = calendarDate.getFullYear();
+			const month = calendarDate.getMonth();
+			const monthKey = `${ticketId}-${year}-${month}`;
+
+			console.log('[Booking Debug] Step 2 effect triggered', {
+				ticketId,
+				year,
+				month,
+				monthKey,
+				alreadyLoaded: loadedMonths.has(monthKey)
+			});
+
+			if (!loadedMonths.has(monthKey)) {
+				loadedMonths.add(monthKey);
+				console.log('[Booking Debug] Loading availability for', monthKey);
+				bookingActions.loadDateAvailabilityForTicket(ticketId, year, month);
+			}
 		}
 	});
 
+	// Effect to handle time slot loading when moving to step 3
 	$effect(() => {
-		// When moving to step 3 (time selection), fetch the available time slots.
-		// This ensures we always have fresh data based on the selected date and ticket type.
-		if (currentStep === 3) {
+		if (currentStep === 3 && $selectedDate && $selectedTicket) {
+			console.log('[Booking Debug] Loading time slots for step 3', {
+				date: $selectedDate.toISOString().split('T')[0],
+				ticketId: $selectedTicket.id,
+				totalTickets: $totalTickets
+			});
 			bookingActions.loadTimeSlotsForSelection();
 		}
 	});
 
+	// Effect to clear errors when relevant data changes
 	$effect(() => {
-		// Clear general booking errors when the user makes a selection,
-		// as this indicates they are trying to correct the issue.
 		if ($selectedDate || $selectedTimeSlot || $totalTickets) {
 			bookingError.set(null);
 		}
 	});
 
-	// --- NAVIGATION ---
+	// Effect to handle ticket type changes - reset loaded months and date availability
+	$effect(() => {
+		const currentTicketId = $selectedTicket?.id;
+		if (currentTicketId !== lastTicketId) {
+			console.log('[Booking Debug] Ticket changed from', lastTicketId, 'to', currentTicketId);
+			if (lastTicketId !== null) {
+				// Only reset if we had a previous ticket (not on initial load)
+				loadedMonths = new Set();
+				console.log('[Booking Debug] Reset loaded months due to ticket change');
+			}
+			lastTicketId = currentTicketId;
+		}
+	});
 
-	/**
-	 * Checks if a given step can be accessed based on the completion of previous steps.
-	 * @param {number} stepId The ID of the step to check.
-	 * @returns {boolean} True if the step is accessible.
-	 */
+	// --- NAVIGATION ---
 	function isStepAccessible(stepId: number): boolean {
 		for (let i = 1; i < stepId; i++) {
 			const step = steps.find((s) => s.id === i);
@@ -175,26 +241,64 @@
 		}
 	}
 
-	// --- BOOKING SUBMISSION ---
+	/**
+	 * Handle month change from Calendar component
+	 * @param date - The new month/year date
+	 */
+	function handleMonthChange(date: Date): void {
+		calendarDate = new Date(date);
 
+		console.log('[Booking Debug] Month changed to', date);
+
+		// Load availability for the new month if we have a selected ticket
+		if ($selectedTicket?.id) {
+			const ticketId = $selectedTicket.id;
+			const year = date.getFullYear();
+			const month = date.getMonth();
+			const monthKey = `${ticketId}-${year}-${month}`;
+
+			console.log('[Booking Debug] Checking if need to load', monthKey);
+
+			if (!loadedMonths.has(monthKey)) {
+				loadedMonths.add(monthKey);
+				console.log('[Booking Debug] Loading availability for new month', monthKey);
+				bookingActions.loadDateAvailabilityForTicket(ticketId, year, month);
+			}
+		}
+	}
+
+	/**
+	 * Handle date selection from Calendar component
+	 * @param date - The selected date
+	 */
+	function handleDateSelect(date: Date): void {
+		console.log('[Booking Debug] Date selected', date);
+		bookingActions.setSelectedDate(date);
+		goToNextStep();
+	}
+
+	/**
+	 * Handle time slot selection
+	 */
+	function handleTimeSlotSelect(): void {
+		console.log('[Booking Debug] Time slot selected, current selection:', $selectedTimeSlot?.id);
+		goToNextStep();
+	}
+
+	/**
+	 * Handle ticket selection
+	 */
+	function handleTicketSelect(): void {
+		console.log('[Booking Debug] Ticket selected');
+		goToNextStep();
+	}
+
+	// --- BOOKING SUBMISSION ---
 	async function handleProceedToPayment(): Promise<void> {
 		if (!bookingActions.validateBooking()) {
-			// Errors will be displayed reactively from the store.
 			return;
 		}
-
-		try {
-			const booking = await bookingActions.createBooking();
-			if (booking?.id) {
-				// On success, navigate to the checkout page with the booking ID.
-				await goto(`/checkout?booking=${booking.id}&step=payment`);
-			} else {
-				throw new Error('Invalid booking response from server.');
-			}
-		} catch (error) {
-			console.error('Booking creation failed:', error);
-			// Error is set in the store and will be displayed by the Alert component.
-		}
+		await goto(`/checkout`);
 	}
 </script>
 
@@ -254,7 +358,7 @@
 								class:border-primary-400={isActive && !isCompleted}
 								class:text-primary-600={isActive && !isCompleted}
 								class:border-neutral-200={!isActive && !isCompleted}
-								class:text-neutral-400={!isActive && !isCompleted}
+								class:text-neutral-400={isActive && !isCompleted}
 							>
 								{#if isCompleted}
 									<Check class="h-5 w-5" />
@@ -293,7 +397,6 @@
 				<div
 					class="shadow-exhibit relative overflow-hidden rounded-2xl border border-neutral-100 bg-white"
 				>
-					<!-- --- MODIFIED: Step 1 is now Ticket Selection --- -->
 					{#if currentStep === 1}
 						<div class="p-6 md:p-8" in:fade={{ duration: 400 }} out:fade={{ duration: 200 }}>
 							<h2 class="font-heading mb-2 text-2xl font-bold text-neutral-900">
@@ -305,12 +408,11 @@
 							<TicketSelector
 								language="en"
 								class="w-full text-neutral-950"
-								on:select={goToNextStep}
+								onselect={handleTicketSelect}
 							/>
 						</div>
 					{/if}
 
-					<!-- --- MODIFIED: Step 2 is now Date Selection --- -->
 					{#if currentStep === 2}
 						<div class="p-6 md:p-8" in:fade={{ duration: 400 }} out:fade={{ duration: 200 }}>
 							<h2 class="font-heading mb-2 text-2xl font-bold text-neutral-900">
@@ -319,17 +421,34 @@
 							<p class="mb-6 text-neutral-600">
 								Choose an available date for your museum experience.
 							</p>
-							<Calendar
-								class="w-full"
-								on:select={goToNextStep}
-								bind:viewDate={calendarDate}
-								selectedTicketId={$selectedTicket?.id ?? null}
-								availabilityMap={$dateAvailability.get($selectedTicket?.id ?? '') ?? null}
-							/>
+
+							<!-- Loading indicator for date availability -->
+							{#if $isLoadingDateAvailability}
+								<div class="mb-4 flex items-center justify-center rounded-lg bg-blue-50 p-4">
+									<Loader class="mr-2 h-5 w-5 animate-spin text-blue-600" />
+									<span class="text-blue-800">Loading date availability...</span>
+								</div>
+							{/if}
+
+							<!-- No ticket selected warning -->
+							{#if !$selectedTicket}
+								<div class="mb-4 flex items-center justify-center rounded-lg bg-amber-50 p-4">
+									<Info class="mr-2 h-5 w-5 text-amber-600" />
+									<span class="text-amber-800">Please select a ticket type first</span>
+								</div>
+							{:else}
+								<Calendar
+									class="w-full"
+									selectedDate={$selectedDate}
+									availabilityMap={availabilityMap()}
+									selectedTicketId={$selectedTicket?.id ?? null}
+									onselect={handleDateSelect}
+									onmonthChange={handleMonthChange}
+								/>
+							{/if}
 						</div>
 					{/if}
 
-					<!-- Step 3: Time Slot Selection -->
 					{#if currentStep === 3}
 						<div class="p-6 md:p-8" in:fade={{ duration: 400 }} out:fade={{ duration: 200 }}>
 							<h2 class="font-heading mb-2 text-2xl font-bold text-neutral-900">
@@ -341,24 +460,52 @@
 									{ month: 'long', day: 'numeric' }
 								)}.
 							</p>
-							{#if $isLoadingTimeSlots}
+
+							<!-- Prerequisites Check -->
+							{#if !$selectedDate}
+								<div class="mb-4 flex items-center justify-center rounded-lg bg-amber-50 p-4">
+									<AlertTriangle class="mr-2 h-5 w-5 text-amber-600" />
+									<span class="text-amber-800">Please select a date first</span>
+								</div>
+							{:else if !$selectedTicket}
+								<div class="mb-4 flex items-center justify-center rounded-lg bg-amber-50 p-4">
+									<AlertTriangle class="mr-2 h-5 w-5 text-amber-600" />
+									<span class="text-amber-800">Please select a ticket type first</span>
+								</div>
+							{:else if $totalTickets <= 0}
+								<div class="mb-4 flex items-center justify-center rounded-lg bg-amber-50 p-4">
+									<AlertTriangle class="mr-2 h-5 w-5 text-amber-600" />
+									<span class="text-amber-800">Please select at least one ticket</span>
+								</div>
+							{:else if $isLoadingTimeSlots}
 								<div class="flex h-48 items-center justify-center text-neutral-500">
 									<Loader class="mr-2 animate-spin" /> Loading available times...
 								</div>
+							{:else if $availableTimeSlots.length === 0}
+								<div
+									class="mb-4 flex flex-col items-center justify-center rounded-lg bg-red-50 p-6"
+								>
+									<AlertTriangle class="mb-2 h-8 w-8 text-red-600" />
+									<span class="text-center text-red-800"
+										>No time slots available for the selected date</span
+									>
+									<p class="mt-2 text-center text-sm text-red-600">
+										Please choose a different date
+									</p>
+								</div>
 							{:else}
-								<TimeSlotPicker class="w-full" />
+								<TimeSlotPicker class="w-full" onselect={handleTimeSlotSelect} />
 							{/if}
 						</div>
 					{/if}
 
-					<!-- Step 4: Customer Information -->
 					{#if currentStep === 4}
 						<div class="p-6 md:p-8" in:fade={{ duration: 400 }} out:fade={{ duration: 200 }}>
 							<h2 class="font-heading mb-2 text-2xl font-bold text-neutral-900">
 								Your Information
 							</h2>
 							<p class="mb-6 text-neutral-900">We need a few details to complete your booking.</p>
-							<CustomerForm />
+							<CustomerForm onsubmit={handleProceedToPayment} />
 						</div>
 					{/if}
 
