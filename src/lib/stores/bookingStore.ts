@@ -17,6 +17,7 @@
 * - Exports key interfaces like BookingSummary for use in other components.
 * - Fixed availability data flow to ensure calendar displays visual indicators correctly.
 * - Error handling: Comprehensive error states and validation with user feedback.
+* - FIXED: bookingSummary isComplete logic to properly include customerInfo in dependencies.
 */
 
 
@@ -152,8 +153,8 @@ export const totalTickets: Readable<number> = derived(
 
 /** Creates a comprehensive summary of the current booking for display. */
 export const bookingSummary: Readable<BookingSummary> = derived(
-    [selectedDate, selectedTimeSlot, selectedTicket, availableTicketTypes, totalPrice, totalTickets],
-    ([$selectedDate, $selectedTimeSlot, $selectedTicket, $availableTicketTypes, $totalPrice, $totalTickets]) => {
+    [selectedDate, selectedTimeSlot, selectedTicket, availableTicketTypes, totalPrice, totalTickets, customerInfo],
+    ([$selectedDate, $selectedTimeSlot, $selectedTicket, $availableTicketTypes, $totalPrice, $totalTickets, $customerInfo]) => {
         const tickets: TicketSummary[] = [];
 
         if ($selectedTicket) {
@@ -167,13 +168,34 @@ export const bookingSummary: Readable<BookingSummary> = derived(
             }
         }
 
+        // Fixed isComplete logic - now properly reactive to customerInfo changes
+        const hasDate = !!$selectedDate;
+        const hasTimeSlot = !!$selectedTimeSlot;
+        const hasTickets = $totalTickets > 0;
+        const hasCustomerName = !!$customerInfo.name && $customerInfo.name.trim().length >= 2;
+        const hasCustomerEmail = !!$customerInfo.email && $customerInfo.email.includes('@');
+
+        console.log('[BookingSummary] isComplete calculation:', {
+            hasDate,
+            hasTimeSlot,
+            hasTickets,
+            hasCustomerName,
+            hasCustomerEmail,
+            customerInfo: $customerInfo,
+            selectedDate: $selectedDate,
+            selectedTimeSlot: $selectedTimeSlot,
+            totalTickets: $totalTickets
+        });
+
+        const isComplete = hasDate && hasTimeSlot && hasTickets && hasCustomerName && hasCustomerEmail;
+
         return {
             date: $selectedDate,
             timeSlot: $selectedTimeSlot,
             tickets,
             totalPrice: $totalPrice,
             totalTickets: $totalTickets,
-            isComplete: !!($selectedDate && $selectedTimeSlot && $totalTickets > 0 && get(customerInfo).name && get(customerInfo).email)
+            isComplete
         };
     }
 );
@@ -366,6 +388,7 @@ export const bookingActions = {
      * @param {Partial<CustomerInfo>} info - Partial customer information.
      */
     updateCustomerInfo(info: Partial<CustomerInfo>): void {
+        console.log(`[BookingStore] Updating customer info:`, info);
         customerInfo.update(current => ({ ...current, ...info }));
         validationErrors.update(current => ({ ...current, name: undefined, email: undefined }));
     },
@@ -378,6 +401,8 @@ export const bookingActions = {
         const errors: ValidationErrors = {};
         const summary = get(bookingSummary);
         const customer = get(customerInfo);
+
+        console.log(`[BookingStore] Validating booking:`, { summary, customer });
 
         if (!summary.date) errors.date = 'Please select a visit date';
         if (summary.totalTickets === 0) errors.tickets = 'Please select a ticket';
