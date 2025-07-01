@@ -442,8 +442,8 @@
 									selectedDate={$selectedDate}
 									availabilityMap={availabilityMap()}
 									selectedTicketId={$selectedTicket?.id ?? null}
-									onselect={handleDateSelect}
-									onmonthChange={handleMonthChange}
+									onSelect={handleDateSelect}
+									onMonthChange={handleMonthChange}
 								/>
 							{/if}
 						</div>

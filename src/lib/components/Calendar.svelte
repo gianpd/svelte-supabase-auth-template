@@ -274,13 +274,6 @@
 		</button>
 	</div>
 
-	<!-- Availability Status Debug Info (remove in production) -->
-	{#if selectedTicketId && availabilityMap}
-		<div class="mb-2 text-xs text-neutral-500">
-			Debug: Ticket {selectedTicketId}, Map size: {availabilityMap.size}
-		</div>
-	{/if}
-
 	<!-- Calendar Grid -->
 	<div class="grid grid-cols-7 gap-1 text-center text-sm">
 		<!-- Day Headers -->
