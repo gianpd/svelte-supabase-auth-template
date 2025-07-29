@@ -254,7 +254,7 @@
 			<Button
 				variant="outline"
 				class="inline-flex items-center space-x-2"
-				onclick={() => (window.location.href = '/exhibitions')}
+				onclick={() => (window.location.href = '/plan-your-visit')}
 			>
 				<span>Vedi tutte le mostre</span>
 				<ArrowRight class="h-5 w-5" />
