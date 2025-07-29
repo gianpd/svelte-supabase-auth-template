@@ -128,7 +128,7 @@
 				<!-- CTA Buttons -->
 				<div class="mt-10 flex flex-col gap-4 sm:flex-row sm:justify-center lg:justify-start">
 					<Button
-						class="inline-flex items-center justify-center space-x-2 bg-white text-blue-900 hover:bg-blue-50"
+						class="inline-flex items-center justify-center space-x-2 bg-gray-400 text-blue-900 hover:bg-blue-50"
 						size="lg"
 					>
 						<Calendar class="h-5 w-5" />

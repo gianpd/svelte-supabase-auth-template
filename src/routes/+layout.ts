@@ -1,31 +1,18 @@
 // src/routes/+layout.ts
-
-import { PUBLIC_SUPABASE_ANON_KEY, PUBLIC_SUPABASE_URL } from '$env/static/public'
-import { createBrowserClient, createServerClient, isBrowser } from '@supabase/ssr'
 import { dev } from '$app/environment';
 import { injectAnalytics } from '@vercel/analytics/sveltekit';
 
 export const load = async ({ fetch, data, depends }) => {
-    depends('supabase:auth')
+    // Remove Supabase auth dependency since we're not using authentication
+    // depends('supabase:auth')
 
-    const supabase = isBrowser()
-        ? createBrowserClient(PUBLIC_SUPABASE_URL, PUBLIC_SUPABASE_ANON_KEY, {
-            global: { fetch }
-        })
-        : createServerClient(PUBLIC_SUPABASE_URL, PUBLIC_SUPABASE_ANON_KEY, {
-            global: { fetch },
-            cookies: {
-                getAll() {
-                    return data.cookies
-                }
-            }
-        })
+    // Return any data that might be needed across the application
+    // In this case, we're just passing through any data from the server
+    return {
+        // Pass through any data from +layout.server.ts if it exists
+        ...data
+    };
+};
 
-    const session = isBrowser() ? (await supabase.auth.getSession()).data.session : data.session
-
-    return { supabase, session }
-}
-
-
-
+// Keep analytics injection for production monitoring
 injectAnalytics({ mode: dev ? 'development' : 'production' });
