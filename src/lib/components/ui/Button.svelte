@@ -7,6 +7,7 @@
 		disabled?: boolean;
 		loading?: boolean;
 		class?: string;
+		href?: string;
 		variant?: 'primary' | 'secondary' | 'danger' | 'outline' | 'link';
 		size?: 'sm' | 'md' | 'lg';
 	}

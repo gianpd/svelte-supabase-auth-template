@@ -44,7 +44,7 @@
 			id: 1,
 			title: 'Insediamenti Rupestri di Zungri',
 			description: 'Scopri gli antichi insediamenti rupestri scavati nella roccia.',
-			image: '/images/rupestri.jpeg',
+			image: 'rupestri.jpeg',
 			duration: 'Permanente',
 			category: 'Archeologico'
 		},
@@ -52,7 +52,7 @@
 			id: 2,
 			title: 'Tradizioni Contadine Calabresi',
 			description: 'Un viaggio attraverso le tradizioni agricole della Calabria.',
-			image: '/images/storia.jpg',
+			image: 'storia.jpg',
 			duration: 'Marzo - Giugno 2024',
 			category: 'Etnografico'
 		},
@@ -60,7 +60,7 @@
 			id: 3,
 			title: 'Arte Sacra del Territorio',
 			description: 'Tesori artistici delle chiese e dei monasteri locali.',
-			image: '/images/arte-sacra.jpg',
+			image: 'arte-sacra.jpg',
 			duration: 'Aprile - Settembre 2024',
 			category: 'Arte'
 		}
@@ -108,7 +108,7 @@
 <section class="relative bg-gradient-to-br from-blue-900 via-blue-800 to-blue-700 text-white">
 	<!-- Background pattern/overlay -->
 	<div class="absolute inset-0 bg-black/20"></div>
-	<div class="absolute inset-0 bg-[url('/images/pattern.jpg')] opacity-10" aria-hidden="true"></div>
+	<div class="absolute inset-0 bg-[url('pattern.jpg')] opacity-10" aria-hidden="true"></div>
 
 	<div class="relative mx-auto max-w-7xl px-4 py-20 sm:px-6 sm:py-28 lg:px-8">
 		<div class="grid grid-cols-1 gap-12 lg:grid-cols-2 lg:items-center">
@@ -149,7 +149,7 @@
 			<div class="relative">
 				<div class="aspect-[4/3] overflow-hidden rounded-2xl bg-blue-800/50 shadow-2xl">
 					<img
-						src="/images/zungri-cave.jpg"
+						src="zungri-cave.jpg"
 						alt="Insediamenti rupestri di Zungri"
 						class="h-full w-full object-cover"
 						loading="eager"
