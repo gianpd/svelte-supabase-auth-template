@@ -48,7 +48,7 @@ export default defineConfig({
 		// Fixed proxy configuration for FastAPI backend
 		proxy: {
 			// Match all API routes including /api/v1/
-			'^/api/': {
+			'^/api/v1': {
 				target: process.env.VITE_BACKEND_URL || 'http://localhost:8000',
 				changeOrigin: true,
 				secure: false, // Set to true if using HTTPS in production
