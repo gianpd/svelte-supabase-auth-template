@@ -1,26 +1,34 @@
 <script lang="ts">
 	/**
 	 * @file +page.svelte for /shop/[productId]
-	 * @purpose Renders the detailed view for a single merchandise product.
+	 * @purpose Renders the detailed view for a single merchandise product, including an image gallery.
+	 *
 	 * @dependencies
-	 * - svelte: For component logic and transitions.
+	 * - svelte: For component logic, transitions, and Svelte 5 runes.
 	 * - lucide-svelte: For icons.
 	 * - $lib/stores/cartStore: For adding items to the cart.
+	 * - $lib/components/ImageWithLoader.svelte: For lazy-loading images with states.
+	 *
 	 * @notes
 	 * - Receives product data from its `+page.server.ts` load function.
-	 * - Displays product details including name, price, description, and stock status.
+	 * - Displays a main image and a gallery of thumbnails if multiple images are available.
+	 * - Users can switch the main image by clicking on thumbnails.
 	 * - Provides an input to select quantity and an "Add to Cart" button.
-	 * - The "Add to Cart" button is disabled for out-of-stock items.
+	 * - Error handling: Disables "Add to Cart" for out-of-stock items and provides feedback for invalid quantities.
 	 */
 	import { cart } from '$lib/stores/cartStore';
 	import { fade } from 'svelte/transition';
 	import { ShoppingCart } from 'lucide-svelte';
+	import ImageWithLoader from '$lib/components/ImageWithLoader.svelte';
 
 	let { data } = $props();
 	const { product } = data;
 
-	// Use $state for reactive state variable
+	// Use $state for reactive state variables
 	let quantity = $state(1);
+	let activeImage = $state(
+		product.images.find((img) => img.is_primary) || product.images[0] || null
+	);
 
 	/** Adds the selected quantity of the current product to the cart. */
 	function handleAddToCart() {
@@ -55,26 +63,60 @@
 	<div class="container mx-auto max-w-5xl px-4">
 		<div class="grid grid-cols-1 gap-8 md:grid-cols-2 md:gap-12">
 			<!-- Image Section -->
-			<div class="aspect-h-1 aspect-w-1 w-full overflow-hidden rounded-lg bg-neutral-100">
-				<!-- Placeholder for product image. -->
-				<div class="flex h-full w-full items-center justify-center text-neutral-400">
-					<svg
-						xmlns="http://www.w3.org/2000/svg"
-						width="96"
-						height="96"
-						viewBox="0 0 24 24"
-						fill="none"
-						stroke="currentColor"
-						stroke-width="1"
-						stroke-linecap="round"
-						stroke-linejoin="round"
-						><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle
-							cx="8.5"
-							cy="8.5"
-							r="1.5"
-						></circle><polyline points="21 15 16 10 5 21"></polyline></svg
-					>
+			<div>
+				<div class="aspect-h-1 aspect-w-1 w-full overflow-hidden rounded-lg bg-neutral-100">
+					{#if activeImage}
+						<ImageWithLoader
+							src={`/static/images/${activeImage.image_path}`}
+							alt={name}
+							class="h-full w-full object-cover object-center"
+							loading="eager"
+						/>
+					{:else}
+						<!-- Placeholder for product image. -->
+						<div class="flex h-full w-full items-center justify-center text-neutral-400">
+							<svg
+								xmlns="http://www.w3.org/2000/svg"
+								width="96"
+								height="96"
+								viewBox="0 0 24 24"
+								fill="none"
+								stroke="currentColor"
+								stroke-width="1"
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle
+									cx="8.5"
+									cy="8.5"
+									r="1.5"
+								></circle><polyline points="21 15 16 10 5 21"></polyline></svg
+							>
+						</div>
+					{/if}
 				</div>
+
+				<!-- Thumbnails -->
+				{#if product.images.length > 1}
+					<div class="mt-4 grid grid-cols-5 gap-2">
+						{#each product.images as image (image.id)}
+							<button
+								type="button"
+								class="aspect-h-1 aspect-w-1 focus:ring-primary-500 w-full overflow-hidden rounded-md border-2 bg-neutral-100 transition-all focus:outline-none focus:ring-2 focus:ring-offset-2 {activeImage?.id ===
+								image.id
+									? 'border-primary-500'
+									: 'border-transparent hover:border-neutral-300'}"
+								onclick={() => (activeImage = image)}
+								aria-label={`View image ${product.images.indexOf(image) + 1} for ${name}`}
+							>
+								<ImageWithLoader
+									src={`/static/images/${image.image_path}`}
+									alt={`Thumbnail for ${name}`}
+									class="h-full w-full object-cover object-center"
+								/>
+							</button>
+						{/each}
+					</div>
+				{/if}
 			</div>
 
 			<!-- Details Section -->

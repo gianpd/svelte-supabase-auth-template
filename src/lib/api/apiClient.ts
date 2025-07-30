@@ -1,20 +1,18 @@
 /**
-* @file apiClient.ts
-* @purpose Centralized API client for communicating with FastAPI backend
-*
-* @dependencies
-* - SvelteKit's fetch: Server-side fetch during load functions
-* - TypeScript: Strong typing for API responses and requests
-*
-* @notes
-* - Handles authentication for admin endpoints
-* - Provides error handling and response validation
-* - Supports both server-side and client-side requests
-* - Error handling: Throws typed errors for proper catch handling
-* - Updated to include payment-related endpoints.
-*/
-
-
+ * @file apiClient.ts
+ * @purpose Centralized API client for communicating with FastAPI backend.
+ *
+ * @dependencies
+ * - SvelteKit's fetch: For server-side and client-side HTTP requests.
+ * - TypeScript: For strong typing of API responses and requests.
+ * - $lib/schemas/payment: For payment-related request payloads.
+ *
+ * @notes
+ * - Added `MerchandiseImage` interface and updated `Merchandise` interface to include an `images` array.
+ * - Handles authentication for admin endpoints.
+ * - Provides centralized error handling and response validation.
+ * - Error handling: Throws custom `ApiError` and `NetworkError` for robust error management in components.
+ */
 import type { OrderCreatePayload } from "$lib/schemas/payment";
 
 // Types based on backend schema structure
@@ -84,6 +82,14 @@ export interface TimeSlot {
     updated_at: string;
 }
 
+/** Represents a single image associated with a merchandise item. */
+export interface MerchandiseImage {
+    id: string;
+    image_path: string;
+    is_primary: boolean;
+    created_at: string;
+}
+
 export interface Merchandise {
     id: string;
     name_translations: Record<string, string>;
@@ -92,6 +98,7 @@ export interface Merchandise {
     inventory: number;
     created_at: string;
     updated_at: string;
+    images: MerchandiseImage[];
 }
 
 export interface Booking {

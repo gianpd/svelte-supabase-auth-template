@@ -118,3 +118,27 @@ button.nav-button:focus {
         gap: 0.5rem;
     }
 }
+
+/* Add to your global CSS file or component styles */
+@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@300;400;500;600;700;800;900&display=swap');
+
+.font-display {
+    font-family: 'Playfair Display', serif;
+}
+
+/* Premium scroll animation */
+@keyframes float {
+
+    0%,
+    100% {
+        transform: translateY(0px);
+    }
+
+    50% {
+        transform: translateY(-10px);
+    }
+}
+
+.animate-float {
+    animation: float 3s ease-in-out infinite;
+}

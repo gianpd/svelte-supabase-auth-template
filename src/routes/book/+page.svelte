@@ -323,13 +323,13 @@
 				class="font-display mb-4 text-4xl font-bold text-neutral-900 md:text-5xl"
 				in:fade={{ duration: 800, delay: 200 }}
 			>
-				Book Your Visit
+				Prenota la tua visita
 			</h1>
 			<p
 				class="font-body mx-auto max-w-2xl text-lg leading-relaxed text-neutral-600 md:text-xl"
 				in:fade={{ duration: 800, delay: 400 }}
 			>
-				Follow the steps below to secure your spot.
+				Segui gli steps successivi per riservare il tuo ingresso.
 			</p>
 		</header>
 
@@ -400,11 +400,9 @@
 					{#if currentStep === 1}
 						<div class="p-6 md:p-8" in:fade={{ duration: 400 }} out:fade={{ duration: 200 }}>
 							<h2 class="font-heading mb-2 text-2xl font-bold text-neutral-900">
-								Select Your Tickets
+								Seleziona i biglietti
 							</h2>
-							<p class="mb-6 text-neutral-600">
-								Choose the right experience for you or your group.
-							</p>
+							<p class="mb-6 text-neutral-600">Scegli la giusta esperienza per il tuo gruppo.</p>
 							<TicketSelector
 								language="en"
 								class="w-full text-neutral-950"
@@ -416,10 +414,10 @@
 					{#if currentStep === 2}
 						<div class="p-6 md:p-8" in:fade={{ duration: 400 }} out:fade={{ duration: 200 }}>
 							<h2 class="font-heading mb-2 text-2xl font-bold text-neutral-900">
-								Select Your Visit Date
+								Seleziona la data
 							</h2>
 							<p class="mb-6 text-neutral-600">
-								Choose an available date for your museum experience.
+								Scegli una data disponibile per la visita al Museo
 							</p>
 
 							<!-- Loading indicator for date availability -->
@@ -452,10 +450,10 @@
 					{#if currentStep === 3}
 						<div class="p-6 md:p-8" in:fade={{ duration: 400 }} out:fade={{ duration: 200 }}>
 							<h2 class="font-heading mb-2 text-2xl font-bold text-neutral-900">
-								Choose Your Time Slot
+								Seleziona l'orario
 							</h2>
 							<p class="mb-6 text-neutral-600">
-								Select the perfect time for your visit on {$selectedDate?.toLocaleDateString(
+								Seleziona l'orario per la tua visita il {$selectedDate?.toLocaleDateString(
 									'en-US',
 									{ month: 'long', day: 'numeric' }
 								)}.
@@ -504,7 +502,9 @@
 							<h2 class="font-heading mb-2 text-2xl font-bold text-neutral-900">
 								Your Information
 							</h2>
-							<p class="mb-6 text-neutral-900">We need a few details to complete your booking.</p>
+							<p class="mb-6 text-neutral-900">
+								Abbiamo bisogno di qualche dettaglio per creare la prenotazione
+							</p>
 							<CustomerForm onsubmit={handleProceedToPayment} />
 						</div>
 					{/if}
@@ -557,8 +557,8 @@
 		>
 			<div class="text-center text-white">
 				<Loader class="mx-auto mb-4 h-12 w-12 animate-spin" />
-				<h3 class="text-xl font-bold">Creating Your Booking</h3>
-				<p>Please wait while we secure your visit...</p>
+				<h3 class="text-xl font-bold">Generando la tua visita ...</h3>
+				<p>Stiamo per creare la tua prenotazione...</p>
 			</div>
 		</div>
 	{/if}
