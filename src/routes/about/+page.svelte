@@ -120,10 +120,8 @@
 <section
 	class="from-cream-50 via-background-DEFAULT to-secondary-50 relative bg-gradient-to-br py-16 sm:py-24"
 >
-	<div
-		class="absolute inset-0 opacity-20"
-		style="background-image: url('data:image/svg+xml,%3Csvg width=&quot;60&quot; height=&quot;60&quot; viewBox=&quot;0 0 60 60&quot; xmlns=&quot;http://www.w3.org/2000/svg&quot;%3E%3Cg fill=&quot;none&quot; fill-rule=&quot;evenodd&quot;%3E%3Cg fill=&quot;%23cd853f&quot; fill-opacity=&quot;0.08&quot;%3E%3Cpath d=&quot;M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z&quot;/%3E%3C/g%3E%3C/g%3E%3C/svg%3E')"
-	></div>
+	<div class="absolute inset-0 bg-black/20"></div>
+	<div class="absolute inset-0 bg-[url('pattern.jpg')] opacity-10" aria-hidden="true"></div>
 
 	<div class="relative mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
 		<div class="text-center">
@@ -214,6 +212,35 @@
 
 		<!-- Detailed Content -->
 		<div class="prose prose-lg font-body mx-auto max-w-none text-neutral-700">
+			<div class="grid grid-cols-3 gap-6">
+				<div
+					class="transform overflow-hidden rounded-xl bg-[#f8f7f4] shadow-lg transition-transform hover:scale-105"
+				>
+					<img
+						src="grotte.jpg"
+						alt="La Città di Pietra di Zungri"
+						class="h-80 w-full object-cover"
+					/>
+				</div>
+				<div
+					class="transform overflow-hidden rounded-xl bg-[#f8f7f4] shadow-lg transition-transform hover:scale-105"
+				>
+					<img
+						src="manifesto.jpg"
+						alt="La Città di Pietra di Zungri"
+						class="h-80 w-full object-cover"
+					/>
+				</div>
+				<div
+					class="transform overflow-hidden rounded-xl bg-[#f8f7f4] shadow-lg transition-transform hover:scale-105"
+				>
+					<img
+						src="grotte-rup.jpg"
+						alt="La Città di Pietra di Zungri"
+						class="h-80 w-full object-cover"
+					/>
+				</div>
+			</div>
 			<div class="rounded-card bg-background-DEFAULT shadow-soft p-8">
 				<h3 class="font-display mb-6 text-2xl font-bold text-neutral-900">
 					L'Insediamento Rupestre: Un Viaggio nel Tempo

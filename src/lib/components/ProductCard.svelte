@@ -1,176 +1,349 @@
-<!-- File: frontend/src/lib/components/ProductCard.svelte -->
 <script lang="ts">
 	/**
 	 * @file ProductCard.svelte
-	 * @purpose A reusable component to display a single merchandise item in a list or grid, now with image support.
-	 * @description Un componente riutilizzabile per visualizzare un singolo articolo di merchandising in una lista o griglia.
+	 * @purpose Reusable product card component with demo mode support and image handling
 	 *
 	 * @dependencies
-	 * - svelte: For component logic and Svelte 5 runes.
-	 * - lucide-svelte: For icons.
-	 * - $lib/api/apiClient: For the `Merchandise` type definition.
-	 * - $lib/stores/cartStore: For the `addToCart` action.
-	 * - $lib/components/ImageWithLoader.svelte: For lazy-loading images with loading/error states.
+	 * - $lib/api/apiClient: For Merchandise and MerchandiseImage type definitions
+	 * - $lib/data/mockMerchandise: For getPrimaryImage utility
+	 * - svelte/transition: For animations
 	 *
 	 * @notes
-	 * - Now displays the primary product image using the `ImageWithLoader` component, with a fallback SVG placeholder if no images are available.
-	 * - The "Add to Cart" button is disabled if the product inventory is zero.
-	 * - The entire card is a link to the product's detail page.
-	 * - `e.preventDefault()` is used on the button's click handler to prevent navigating when adding to cart, which is a critical bug fix.
-	 * - Di default mostra la traduzione 'it' per il nome del prodotto, con fallback a 'en'.
+	 * - Supports both live and demo mode display
+	 * - Handles missing product data gracefully
+	 * - Includes proper image handling with fallbacks
+	 * - Shows inventory information and availability
+	 * - Includes accessibility features and proper error handling
 	 */
-	import type { Merchandise } from '$lib/api/apiClient';
-	import { cart } from '$lib/stores/cartStore';
-	import { ShoppingCart } from 'lucide-svelte';
-	import ImageWithLoader from '$lib/components/ImageWithLoader.svelte';
 
-	let { product, class: className = '' }: { product: Merchandise; class?: string } = $props();
+	import type { Merchandise, MerchandiseImage } from '$lib/api/apiClient';
+	import { getPrimaryImage } from '$lib/data/mockMerchandise';
+	import { fade } from 'svelte/transition';
 
-	/**
-	 * Handles the click event for the "Add to Cart" button.
-	 * Prevents the parent link from being followed.
-	 * @param e The mouse event.
-	 */
-	function handleAddToCart(e: MouseEvent) {
-		e.preventDefault(); // Stop the <a> tag from navigating
-		e.stopPropagation(); // Stop event bubbling
-		cart.addToCart(product, 1);
-		// In un'applicazione completa, qui potrebbe essere mostrata una notifica toast.
+	interface Props {
+		product: Merchandise;
+		isDemo?: boolean;
 	}
 
-	// Determines the name to display, falling back from 'it' to 'en' to the first available translation.
-	const lang = 'it';
-	const name = $derived(() => {
-		if (!product.name_translations) return 'Prodotto senza nome';
+	let { product, isDemo = false }: Props = $props();
+
+	/**
+	 * Safely extracts product name with fallback handling
+	 * @param product - The merchandise product
+	 * @returns Localized product name or fallback
+	 */
+	function getProductName(product: Merchandise): string {
+		if (!product?.name_translations) return 'Prodotto Senza Nome';
 		return (
-			product.name_translations[lang] ||
+			product.name_translations['it'] ||
 			product.name_translations['en'] ||
 			Object.values(product.name_translations)[0] ||
-			'Prodotto senza nome'
+			'Prodotto Senza Nome'
 		);
-	});
+	}
 
-	// Get description with same fallback logic
-	const description = $derived(() => {
-		if (!product.description_translations) return '';
+	/**
+	 * Safely extracts product description with fallback handling
+	 * @param product - The merchandise product
+	 * @returns Localized product description or fallback
+	 */
+	function getProductDescription(product: Merchandise): string {
+		if (!product?.description_translations) return '';
 		return (
-			product.description_translations[lang] ||
+			product.description_translations['it'] ||
 			product.description_translations['en'] ||
 			Object.values(product.description_translations)[0] ||
 			''
 		);
-	});
+	}
 
 	/**
-	 * Finds the primary image for the product, or falls back to the first available image.
-	 * @returns The primary `MerchandiseImage` object or the first image, or null if none exist.
+	 * Formats product price as EUR currency
+	 * @param price - The product price (number)
+	 * @returns Formatted price string
 	 */
-	const primaryImage = $derived(() => {
-		if (!product.images || product.images.length === 0) return null;
-		return product.images.find((img) => img.is_primary) || product.images[0];
-	});
-
-	/**
-	 * Safely formats a number as a currency string in Italian style.
-	 * @param price The price to format.
-	 * @returns A formatted currency string (e.g., "€12,50").
-	 */
-	function formatPrice(price: any): string {
-		const numPrice = typeof price === 'string' ? parseFloat(price) : Number(price);
-		if (isNaN(numPrice) || !isFinite(numPrice)) {
-			return '€0,00';
+	function formatPrice(price: number): string {
+		try {
+			if (typeof price !== 'number' || isNaN(price)) return '€ 0,00';
+			return `€ ${price.toFixed(2).replace('.', ',')}`;
+		} catch {
+			return '€ 0,00';
 		}
-		return new Intl.NumberFormat('it-IT', {
-			style: 'currency',
-			currency: 'EUR'
-		}).format(numPrice);
 	}
 
 	/**
-	 * Safely checks if the product is in stock.
-	 * @param inventory The inventory count.
-	 * @returns True if the product is in stock, false otherwise.
+	 * Gets category display name with proper formatting
+	 * @param product - The merchandise product
+	 * @returns Formatted category name
 	 */
-	function isInStock(inventory: any): boolean {
-		const stock = typeof inventory === 'string' ? parseInt(inventory) : Number(inventory);
-		return !isNaN(stock) && stock > 0;
+	function getCategoryName(product: Merchandise): string {
+		const description = getProductDescription(product).toLowerCase();
+
+		// Map category keys to display names
+		const categoryMap: Record<string, string> = {
+			libri: 'Libri',
+			riproduzioni: 'Riproduzioni',
+			gioielli: 'Gioielli',
+			ceramiche: 'Ceramiche',
+			tessili: 'Tessili'
+		};
+
+		return categoryMap[description] || 'Varie';
 	}
 
-	const inStock = $derived(() => isInStock(product.inventory));
-	const formattedPrice = $derived(() => formatPrice(product.price));
+	/**
+	 * Determines inventory status and styling
+	 * @param inventory - Current inventory count
+	 * @returns Inventory status object
+	 */
+	function getInventoryStatus(inventory: number) {
+		if (inventory <= 0) {
+			return {
+				text: 'Esaurito',
+				class: 'bg-red-100 text-red-800',
+				available: false
+			};
+		} else if (inventory <= 3) {
+			return {
+				text: `Ultimi ${inventory} disponibili`,
+				class: 'bg-orange-100 text-orange-800',
+				available: true
+			};
+		} else if (inventory <= 10) {
+			return {
+				text: 'Disponibile',
+				class: 'bg-green-100 text-green-800',
+				available: true
+			};
+		} else {
+			return {
+				text: 'Disponibile',
+				class: 'bg-green-100 text-green-800',
+				available: true
+			};
+		}
+	}
+
+	/**
+	 * Handles card click navigation
+	 * In demo mode, shows a message instead of navigating
+	 */
+	function handleCardClick() {
+		if (isDemo) {
+			alert(
+				'Questo è un prodotto dimostrativo. La visualizzazione dettagliata non è disponibile in modalità offline.'
+			);
+			return;
+		}
+
+		// Navigate to product detail page when implemented
+		console.log('Navigate to product:', product.id);
+	}
+
+	/**
+	 * Handles add to cart action
+	 */
+	function handleAddToCart() {
+		if (isDemo) {
+			alert('Funzione non disponibile in modalità demo');
+			return;
+		}
+
+		if (!inventoryStatus.available) {
+			alert('Prodotto non disponibile');
+			return;
+		}
+
+		console.log('Add to cart:', product.id);
+		// Implement actual cart functionality
+	}
+
+	/**
+	 * Handles image load error with fallback
+	 * @param event - Image error event
+	 */
+	function handleImageError(event: Event) {
+		const img = event.target as HTMLImageElement;
+		img.style.display = 'none';
+		console.warn('Failed to load image:', img.src);
+	}
+
+	// Derived values for template
+	const productName = $derived(getProductName(product));
+	const productDescription = $derived(getProductDescription(product));
+	const formattedPrice = $derived(formatPrice(product.price));
+	const categoryName = $derived(getCategoryName(product));
+	const primaryImage = $derived(getPrimaryImage(product));
+	const inventoryStatus = $derived(getInventoryStatus(product.inventory));
+	const hasValidImage = $derived(primaryImage && primaryImage.image_path && !isDemo);
 </script>
 
-<div
-	class="group relative flex h-full flex-col overflow-hidden rounded-lg border border-neutral-200 bg-white shadow-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-lg {className}"
+<article
+	class="focus-within:ring-primary-500 group relative overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-sm transition-all duration-300 focus-within:ring-2 focus-within:ring-offset-2 hover:shadow-lg hover:shadow-neutral-200/50"
+	in:fade={{ duration: 300 }}
 >
-	<a href="/shop/{product.id}" class="block flex-1" aria-label="Visualizza dettagli per {name()}">
-		<div class="aspect-square w-full overflow-hidden bg-neutral-100">
-			{#if primaryImage()}
-				<ImageWithLoader
-					src={primaryImage().image_path}
-					alt={name()}
-					class="h-full w-full object-cover object-center transition-transform duration-300 group-hover:scale-105"
-					loading="lazy"
-				/>
-			{:else}
-				<!-- Placeholder per l'immagine del prodotto. -->
-				<div class="flex h-full w-full items-center justify-center text-neutral-400">
+	<!-- Demo Badge -->
+	{#if isDemo}
+		<div class="absolute left-3 top-3 z-10">
+			<span
+				class="inline-flex items-center rounded-full bg-amber-100 px-2 py-1 text-xs font-medium text-amber-800"
+			>
+				Demo
+			</span>
+		</div>
+	{/if}
+
+	<!-- Inventory Status Badge -->
+	{#if !inventoryStatus.available}
+		<div class="absolute right-3 top-3 z-10">
+			<span
+				class="inline-flex items-center rounded-full px-2 py-1 text-xs font-medium {inventoryStatus.class}"
+			>
+				{inventoryStatus.text}
+			</span>
+		</div>
+	{/if}
+
+	<!-- Product Image -->
+	<div
+		class="aspect-square w-full overflow-hidden bg-gradient-to-br from-neutral-100 to-neutral-200"
+	>
+		{#if hasValidImage}
+			<img
+				src={primaryImage.image_path}
+				alt={productName}
+				class="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
+				on:error={handleImageError}
+				loading="lazy"
+			/>
+		{:else}
+			<!-- Fallback placeholder -->
+			<div class="flex h-full items-center justify-center">
+				<div class="text-center">
 					<svg
-						xmlns="http://www.w3.org/2000/svg"
-						width="48"
-						height="48"
-						viewBox="0 0 24 24"
+						class="mx-auto h-16 w-16 text-neutral-400"
 						fill="none"
 						stroke="currentColor"
-						stroke-width="1"
-						stroke-linecap="round"
-						stroke-linejoin="round"
+						viewBox="0 0 24 24"
 						aria-hidden="true"
 					>
-						<rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
-						<circle cx="8.5" cy="8.5" r="1.5"></circle>
-						<polyline points="21 15 16 10 5 21"></polyline>
+						<path
+							stroke-linecap="round"
+							stroke-linejoin="round"
+							stroke-width="1.5"
+							d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
+						/>
 					</svg>
+					<p class="mt-2 text-sm text-neutral-500">
+						{isDemo ? 'Immagine Demo' : 'Immagine'}
+					</p>
 				</div>
-			{/if}
-		</div>
-
-		<div class="p-4">
-			<h3 class="mb-2 line-clamp-2 text-lg font-semibold text-neutral-800" title={name()}>
-				{name()}
-			</h3>
-			{#if description()}
-				<p class="mb-3 line-clamp-2 text-sm text-neutral-600">
-					{description()}
-				</p>
-			{/if}
-			<p class="text-primary-600 text-xl font-bold">
-				{formattedPrice()}
-			</p>
-			{#if !inStock()}
-				<p class="mt-1 text-sm font-medium text-red-600">Esaurito</p>
-			{/if}
-		</div>
-	</a>
-
-	<div class="p-4 pt-0">
-		<button
-			type="button"
-			class="bg-primary-500 text-primary-50 hover:bg-primary-600 flex w-full items-center justify-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50"
-			onclick={handleAddToCart}
-			disabled={!inStock()}
-		>
-			<ShoppingCart class="h-4 w-4" aria-hidden="true" />
-			<span>{inStock() ? 'Aggiungi al Carrello' : 'Esaurito'}</span>
-		</button>
+			</div>
+		{/if}
 	</div>
-</div>
+
+	<!-- Product Information -->
+	<div class="p-4">
+		<!-- Category and Inventory Status -->
+		<div class="mb-2 flex items-center justify-between">
+			<span
+				class="bg-primary-100 text-primary-800 inline-flex items-center rounded-full px-2 py-1 text-xs font-medium"
+			>
+				{categoryName}
+			</span>
+
+			{#if inventoryStatus.available && product.inventory <= 10}
+				<span
+					class="inline-flex items-center rounded-full px-2 py-1 text-xs font-medium {inventoryStatus.class}"
+				>
+					{inventoryStatus.text}
+				</span>
+			{/if}
+		</div>
+
+		<!-- Product Name -->
+		<h3 class="group-hover:text-primary-700 mb-2 text-lg font-semibold text-neutral-900">
+			<button
+				on:click={handleCardClick}
+				class="text-left focus:outline-none"
+				aria-label="Visualizza dettagli di {productName}"
+			>
+				<span class="absolute inset-0" aria-hidden="true"></span>
+				{productName}
+			</button>
+		</h3>
+
+		<!-- Product Description -->
+		{#if productDescription}
+			<p class="mb-3 line-clamp-2 text-sm text-neutral-600">
+				Categoria: {getCategoryName(product)}
+			</p>
+		{/if}
+
+		<!-- Price and Actions -->
+		<div class="flex items-center justify-between">
+			<div class="text-primary-600 text-xl font-bold">
+				{formattedPrice}
+			</div>
+
+			<button
+				on:click|stopPropagation={handleAddToCart}
+				disabled={isDemo || !inventoryStatus.available}
+				class="bg-primary-500 hover:bg-primary-600 focus:ring-primary-500 inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-sm font-medium text-white transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:cursor-not-allowed disabled:bg-neutral-400 disabled:opacity-50"
+				aria-label="Aggiungi {productName} al carrello"
+			>
+				<svg
+					class="h-4 w-4"
+					fill="none"
+					stroke="currentColor"
+					viewBox="0 0 24 24"
+					aria-hidden="true"
+				>
+					<path
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						stroke-width="2"
+						d="M3 3h2l.4 2M7 13h10l4-8H5.4m0 0L7 13m0 0l-2.293 2.293A1 1 0 00 5 16v0a1 1 0 01 1 1h11M7 13v4a2 2 0 002 2h7a2 2 0 002-2v-4"
+					/>
+				</svg>
+				{#if !inventoryStatus.available}
+					Esaurito
+				{:else if isDemo}
+					Demo
+				{:else}
+					Carrello
+				{/if}
+			</button>
+		</div>
+
+		<!-- Demo Mode Notice -->
+		{#if isDemo}
+			<div class="mt-3 rounded-md bg-amber-50 p-2">
+				<p class="text-xs text-amber-700">Prodotto dimostrativo - Non disponibile per l'acquisto</p>
+			</div>
+		{/if}
+
+		<!-- Inventory Info -->
+		{#if !isDemo && product.inventory > 0}
+			<div class="mt-2 text-xs text-neutral-500">
+				{product.inventory}
+				{product.inventory === 1 ? 'pezzo disponibile' : 'pezzi disponibili'}
+			</div>
+		{/if}
+	</div>
+
+	<!-- Hover Overlay -->
+	<div
+		class="absolute inset-0 bg-gradient-to-t from-black/5 to-transparent opacity-0 transition-opacity duration-300 group-hover:opacity-100"
+		aria-hidden="true"
+	></div>
+</article>
 
 <style>
 	.line-clamp-2 {
-		overflow: hidden;
 		display: -webkit-box;
-		-webkit-box-orient: vertical;
 		-webkit-line-clamp: 2;
+		-webkit-box-orient: vertical;
+		overflow: hidden;
 	}
 </style>

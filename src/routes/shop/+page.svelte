@@ -1,9 +1,8 @@
-<!-- File: frontend/src/routes/shop/+page.svelte -->
 <script lang="ts">
 	/**
 	 * @file +page.svelte per /shop
-	 * @purpose Production-ready shop page with enhanced security and performance
-	 * @description Pagina negozio sicura e ottimizzata per la produzione
+	 * @purpose Production-ready shop page with enhanced security, performance, and offline support
+	 * @description Pagina negozio sicura e ottimizzata per la produzione con supporto modalità offline
 	 */
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
@@ -22,6 +21,21 @@
 		metaDescription: string;
 		merchandise: Merchandise[];
 		csrfToken: string;
+		isOnline: boolean;
+		connectionStatus: 'connected' | 'offline' | 'error';
+		dataSource: 'api' | 'fallback';
+		fallbackInfo?: {
+			isOfflineMode: boolean;
+			message: string;
+			description: string;
+			timestamp: string;
+		};
+		error?: {
+			type: 'connection' | 'api';
+			message: string;
+			recoverable: boolean;
+			status?: number;
+		};
 	}
 
 	// Props with proper typing
@@ -34,6 +48,7 @@
 	const DEBOUNCE_DELAY = 300;
 	const MAX_PRICE_DEFAULT = 1000;
 	const PRODUCTS_PER_PAGE = 20;
+	const RETRY_DELAY = 5000; // 5 seconds
 
 	// State management with proper types
 	let searchQuery = $state('');
@@ -44,6 +59,8 @@
 	let currentPage = $state(1);
 	let isLoading = $state(false);
 	let error = $state<string | null>(null);
+	let retryAttempt = $state(0);
+	let showConnectionBanner = $state(!data.isOnline);
 
 	// Newsletter state
 	let email = $state('');
@@ -70,12 +87,6 @@
 	] as const;
 
 	// Utility functions with proper error handling
-	function safeParsePrice(price: string | number): number {
-		if (typeof price === 'number') return Math.max(0, price);
-		const parsed = parseFloat(String(price).replace(/[^\d.-]/g, ''));
-		return isNaN(parsed) ? 0 : Math.max(0, parsed);
-	}
-
 	function getProductName(product: Merchandise): string {
 		if (!product?.name_translations) return '';
 		return (
@@ -97,7 +108,7 @@
 	}
 
 	function getProductCategory(product: Merchandise): string {
-		return product.description_translations['it']?.toLowerCase() || '';
+		return product.description_translations?.['it']?.toLowerCase() || '';
 	}
 
 	// Enhanced filtering with error handling and performance optimization
@@ -132,10 +143,10 @@
 				});
 			}
 
-			// Price range filter with safe parsing
+			// Price range filter
 			products = products.filter((product) => {
 				try {
-					const price = safeParsePrice(product.price);
+					const price = product.price;
 					return price >= priceRange.min && price <= priceRange.max;
 				} catch {
 					return false;
@@ -146,10 +157,10 @@
 			try {
 				switch (sortBy) {
 					case 'price-low':
-						products.sort((a, b) => safeParsePrice(a.price) - safeParsePrice(b.price));
+						products.sort((a, b) => a.price - b.price);
 						break;
 					case 'price-high':
-						products.sort((a, b) => safeParsePrice(b.price) - safeParsePrice(a.price));
+						products.sort((a, b) => b.price - a.price);
 						break;
 					case 'newest':
 						products.sort((a, b) => {
@@ -193,7 +204,7 @@
 	let maxPrice = $derived(() => {
 		try {
 			if (!data?.merchandise || data.merchandise.length === 0) return MAX_PRICE_DEFAULT;
-			const prices = data.merchandise.map((p) => safeParsePrice(p.price)).filter((p) => p > 0);
+			const prices = data.merchandise.map((p) => p.price).filter((p) => p > 0);
 			return prices.length > 0 ? Math.max(...prices) : MAX_PRICE_DEFAULT;
 		} catch {
 			return MAX_PRICE_DEFAULT;
@@ -232,6 +243,26 @@
 		showFilters = !showFilters;
 	}
 
+	// Connection retry functionality
+	async function retryConnection() {
+		if (isLoading) return;
+
+		isLoading = true;
+		retryAttempt++;
+
+		try {
+			console.log(`🔄 Retry attempt ${retryAttempt}...`);
+			window.location.reload();
+		} catch (err) {
+			console.error('Retry failed:', err);
+			isLoading = false;
+		}
+	}
+
+	function dismissConnectionBanner() {
+		showConnectionBanner = false;
+	}
+
 	// Enhanced newsletter submission with security measures
 	async function handleNewsletterSubmit() {
 		if (!email || emailError()) return;
@@ -240,18 +271,17 @@
 		newsletterMessage = '';
 
 		try {
-			// Get CSRF token if available
-			const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+			// In offline mode, show appropriate message
 
 			const response = await fetch('/api/newsletter', {
 				method: 'POST',
 				headers: {
 					'Content-Type': 'application/json',
-					...(csrfToken && { 'X-CSRF-Token': csrfToken })
+					...(data.csrfToken && { 'X-CSRF-Token': data.csrfToken })
 				},
 				body: JSON.stringify({
 					email: sanitizeInput(email),
-					timestamp: Date.now() // Help prevent replay attacks
+					timestamp: Date.now()
 				})
 			});
 
@@ -304,6 +334,18 @@
 			if (urlParams.get('sort')) {
 				sortBy = urlParams.get('sort') || 'featured';
 			}
+
+			// Auto-retry connection if in offline mode
+			if (!data.isOnline && data.error?.recoverable) {
+				const retryTimer = setTimeout(() => {
+					if (!data.isOnline) {
+						console.log('Auto-retrying connection...');
+						retryConnection();
+					}
+				}, RETRY_DELAY);
+
+				return () => clearTimeout(retryTimer);
+			}
 		}
 	});
 
@@ -352,43 +394,166 @@
 
 	<!-- Structured data for SEO -->
 	{@html `<script type="application/ld+json">
-		{
-			"@context": "https://schema.org",
-			"@type": "Store",
-			"name": "Negozio Museo",
-			"description": "${data?.metaDescription || 'Collezione museale di arte e cultura'}",
-			"url": "${page.url.href}",
-			"hasOfferCatalog": {
-				"@type": "OfferCatalog",
-				"name": "Collezione Museo",
-				"itemListElement": [
-					${
-						data?.merchandise
-							?.slice(0, 10)
-							.map(
-								(product) => `{
-						"@type": "Offer",
-						"itemOffered": {
-							"@type": "Product",
-							"name": "${getProductName(product)}",
-							"description": "${getProductDescription(product)}",
-							"offers": {
-								"@type": "Offer",
-								"price": "${safeParsePrice(product.price)}",
-								"priceCurrency": "EUR"
-							}
-						}
-					}`
-							)
-							.join(',') || ''
-					}
-				]
-			}
-		}
-	</script>`}
+        		{
+        			"@context": "https://schema.org",
+        			"@type": "Store",
+        			"name": "Negozio Museo",
+        			"description": "${data?.metaDescription || 'Collezione museale di arte e cultura'}",
+        			"url": "${page.url.href}",
+        			"hasOfferCatalog": {
+        				"@type": "OfferCatalog",
+        				"name": "Collezione Museo",
+        				"itemListElement": [
+        					${
+										data?.merchandise
+											?.slice(0, 10)
+											.map(
+												(product) => `{
+        						"@type": "Offer",
+        						"itemOffered": {
+        							"@type": "Product",
+        							"name": "${getProductName(product)}",
+        							"description": "${getProductDescription(product)}",
+        							"offers": {
+        								"@type": "Offer",
+        								"price": "${product.price}",
+        								"priceCurrency": "EUR"
+        							}
+        						}
+        					}`
+											)
+											.join(',') || ''
+									}
+        				]
+        			}
+        		}
+        	</script>`}
 </svelte:head>
 
 <ErrorBoundary>
+	<!-- Connection Status Banner -->
+	{#if showConnectionBanner && !data.isOnline}
+		<div
+			class="relative border-b {data.connectionStatus === 'error'
+				? 'border-red-200 bg-red-50'
+				: 'border-amber-200 bg-amber-50'}"
+			role="alert"
+			aria-live="polite"
+			in:fly={{ y: -50, duration: 300 }}
+		>
+			<div class="container mx-auto max-w-7xl px-4 py-3">
+				<div class="flex items-center justify-between">
+					<div class="flex items-center gap-3">
+						<div
+							class="flex-shrink-0 {data.connectionStatus === 'error'
+								? 'text-red-500'
+								: 'text-amber-500'}"
+						>
+							{#if data.connectionStatus === 'error'}
+								<svg class="h-5 w-5" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true">
+									<path
+										fill-rule="evenodd"
+										d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z"
+										clip-rule="evenodd"
+									/>
+								</svg>
+							{:else}
+								<svg class="h-5 w-5" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true">
+									<path
+										fill-rule="evenodd"
+										d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z"
+										clip-rule="evenodd"
+									/>
+								</svg>
+							{/if}
+						</div>
+						<div>
+							<h3
+								class="text-sm font-medium {data.connectionStatus === 'error'
+									? 'text-red-800'
+									: 'text-amber-800'}"
+							>
+								{data.connectionStatus === 'error' ? 'Errore di Connessione' : 'Modalità Offline'}
+							</h3>
+							<p
+								class="text-sm {data.connectionStatus === 'error'
+									? 'text-red-700'
+									: 'text-amber-700'}"
+							>
+								{data.error?.message || data.fallbackInfo?.description}
+								{data.dataSource === 'fallback' ? ' Visualizzando prodotti dimostrativi.' : ''}
+							</p>
+						</div>
+					</div>
+					<div class="flex items-center gap-2">
+						{#if data.error?.recoverable}
+							<button
+								on:click={retryConnection}
+								disabled={isLoading}
+								class="inline-flex items-center gap-1 rounded-lg border border-transparent px-3 py-1 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-offset-2 {data.connectionStatus ===
+								'error'
+									? 'bg-red-100 text-red-800 hover:bg-red-200 focus:ring-red-500'
+									: 'bg-amber-100 text-amber-800 hover:bg-amber-200 focus:ring-amber-500'} disabled:opacity-50"
+								aria-label="Riprova connessione"
+							>
+								{#if isLoading}
+									<svg
+										class="h-3 w-3 animate-spin"
+										fill="none"
+										stroke="currentColor"
+										viewBox="0 0 24 24"
+										aria-hidden="true"
+									>
+										<path
+											stroke-linecap="round"
+											stroke-linejoin="round"
+											stroke-width="2"
+											d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+										/>
+									</svg>
+								{:else}
+									<svg
+										class="h-3 w-3"
+										fill="none"
+										stroke="currentColor"
+										viewBox="0 0 24 24"
+										aria-hidden="true"
+									>
+										<path
+											stroke-linecap="round"
+											stroke-linejoin="round"
+											stroke-width="2"
+											d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+										/>
+									</svg>
+								{/if}
+								Riprova
+							</button>
+						{/if}
+						<button
+							on:click={dismissConnectionBanner}
+							class="rounded-lg p-1 {data.connectionStatus === 'error'
+								? 'text-red-500 hover:bg-red-200'
+								: 'text-amber-500 hover:bg-amber-200'} focus:outline-none focus:ring-2 focus:ring-offset-2 {data.connectionStatus ===
+							'error'
+								? 'focus:ring-red-500'
+								: 'focus:ring-amber-500'}"
+							aria-label="Chiudi notifica"
+						>
+							<svg class="h-4 w-4" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true">
+								<path
+									fill-rule="evenodd"
+									d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z"
+									clip-rule="evenodd"
+								/>
+							</svg>
+						</button>
+					</div>
+				</div>
+			</div>
+		</div>
+	{/if}
+
 	<!-- Premium Hero Section -->
 	<section
 		class="relative min-h-[80vh] overflow-hidden bg-gradient-to-br from-slate-900 via-slate-800 to-indigo-900"
@@ -457,7 +622,7 @@
 									d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"
 								/>
 							</svg>
-							Collezione Esclusiva
+							{data.dataSource === 'fallback' ? 'Collezione Dimostrativa' : 'Collezione Esclusiva'}
 						</span>
 					</div>
 
@@ -482,13 +647,20 @@
 						>
 							<p class="text-xl leading-relaxed text-white/80 sm:text-2xl">
 								Scopri la nostra <strong class="font-semibold text-white"
-									>collezione esclusiva</strong
+									>collezione {data.dataSource === 'fallback'
+										? 'dimostrativa'
+										: 'esclusiva'}</strong
 								>
 								di arte, cultura e bellezza
 							</p>
 							<p class="text-lg leading-relaxed text-white/60">
-								Ogni pezzo racconta una storia millenaria, custodita con cura e passione per
-								tramandare l'eredità del nostro patrimonio culturale
+								{#if data.dataSource === 'fallback'}
+									Questi sono prodotti dimostrativi che mostrano il tipo di tesori che puoi trovare
+									nella nostra collezione
+								{:else}
+									Ogni pezzo racconta una storia millenaria, custodita con cura e passione per
+									tramandare l'eredità del nostro patrimonio culturale
+								{/if}
 							</p>
 						</div>
 					</div>
@@ -570,8 +742,12 @@
 			<div class="container mx-auto max-w-7xl px-6 py-6">
 				<div class="grid grid-cols-2 gap-8 md:grid-cols-4">
 					<div class="text-center">
-						<div class="text-2xl font-bold text-white">500+</div>
-						<div class="text-sm text-white/70">Opere Autentiche</div>
+						<div class="text-2xl font-bold text-white">
+							{data.dataSource === 'fallback' ? '12+' : '500+'}
+						</div>
+						<div class="text-sm text-white/70">
+							{data.dataSource === 'fallback' ? 'Prodotti Demo' : 'Opere Autentiche'}
+						</div>
 					</div>
 					<div class="text-center">
 						<div class="text-2xl font-bold text-white">2.000+</div>
@@ -760,6 +936,7 @@
 				<span>
 					{filteredProducts().length}
 					{filteredProducts().length === 1 ? 'prodotto trovato' : 'prodotti trovati'}
+					{data.dataSource === 'fallback' ? '(modalità demo)' : ''}
 				</span>
 				{#if searchQuery || selectedCategory !== 'all' || priceRange.min > 0 || priceRange.max < maxPrice()}
 					<button
@@ -825,7 +1002,7 @@
 								in:fly={{ y: 50, duration: 400, delay: index * 50, easing: quintOut }}
 								role="gridcell"
 							>
-								<ProductCard {product} />
+								<ProductCard {product} isDemo={data.dataSource === 'fallback'} />
 							</div>
 						{/each}
 					</div>
@@ -928,7 +1105,9 @@
 						priceRange.min > 0 ||
 						priceRange.max < maxPrice()
 							? 'Nessun prodotto trovato'
-							: 'Collezione in Arrivo'}
+							: data.dataSource === 'fallback'
+								? 'Demo Collezione'
+								: 'Collezione in Arrivo'}
 					</h3>
 
 					<p class="mb-8 max-w-md text-neutral-600">
@@ -937,7 +1116,9 @@
 						priceRange.min > 0 ||
 						priceRange.max < maxPrice()
 							? 'Prova a modificare i filtri di ricerca o esplora altre categorie.'
-							: 'La nostra collezione di tesori museali è in fase di allestimento. Torna presto per scoprire opere straordinarie!'}
+							: data.dataSource === 'fallback'
+								? 'Questi sono prodotti dimostrativi. La connessione al catalogo principale non è disponibile.'
+								: 'La nostra collezione di tesori museali è in fase di allestimento. Torna presto per scoprire opere straordinarie!'}
 					</p>
 
 					{#if searchQuery || selectedCategory !== 'all' || priceRange.min > 0 || priceRange.max < maxPrice()}
@@ -946,6 +1127,14 @@
 							class="bg-primary-500 hover:bg-primary-600 focus:ring-primary-500 rounded-lg px-6 py-3 font-medium text-white focus:outline-none focus:ring-2 focus:ring-offset-2"
 						>
 							Cancella Tutti i Filtri
+						</button>
+					{:else if data.dataSource === 'fallback' && data.error?.recoverable}
+						<button
+							on:click={retryConnection}
+							disabled={isLoading}
+							class="bg-primary-500 hover:bg-primary-600 focus:ring-primary-500 rounded-lg px-6 py-3 font-medium text-white focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:opacity-50"
+						>
+							{isLoading ? 'Tentativo...' : 'Riprova Connessione'}
 						</button>
 					{/if}
 				</div>
@@ -974,7 +1163,7 @@
 						on:blur={handleEmailBlur}
 						type="email"
 						placeholder="La tua email"
-						class="placeholder-primary-300 focus:ring-primary-400 w-full rounded-lg bg-white/10 px-4 py-3 text-white backdrop-blur-sm focus:bg-white/20 focus:outline-none focus:ring-2 {emailError
+						class="placeholder-primary-300 focus:ring-primary-400 w-full rounded-lg bg-white/10 px-4 py-3 text-white backdrop-blur-sm focus:bg-white/20 focus:outline-none focus:ring-2 disabled:opacity-50 {emailError
 							? 'border-2 border-red-400'
 							: ''}"
 						required
@@ -993,7 +1182,7 @@
 				<button
 					type="submit"
 					class="bg-primary-500 hover:bg-primary-400 focus:ring-primary-400 focus:ring-offset-primary-800 rounded-lg px-6 py-3 font-medium text-white focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-					disabled={newsletterLoading || !!emailError() || !email}
+					disabled={!!emailError() || !email}
 					aria-describedby="submit-help"
 				>
 					{newsletterLoading ? 'Invio...' : 'Iscriviti'}
@@ -1003,7 +1192,9 @@
 
 			{#if newsletterMessage}
 				<div
-					class="mt-4 {newsletterMessage.includes('Errore') || newsletterMessage.includes('errore')
+					class="mt-4 {newsletterMessage.includes('Errore') ||
+					newsletterMessage.includes('errore') ||
+					newsletterMessage.includes('non disponibile')
 						? 'text-red-300'
 						: 'text-green-300'}"
 					role="alert"

@@ -209,8 +209,10 @@
 	<!-- Hero Section -->
 	<section
 		class="relative min-h-screen overflow-hidden bg-gradient-to-b from-[#fefdf9] to-[#1e3a8a]"
-		style="background-image: url('pattern.jpg'); background-attachment: fixed; background-position: center; background-repeat: no-repeat; background-size: cover;"
 	>
+		<!-- Background pattern/overlay -->
+		<div class="absolute inset-0 bg-black/20"></div>
+		<div class="absolute inset-0 bg-[url('pattern.jpg')] opacity-10" aria-hidden="true"></div>
 		<!-- Background overlay -->
 		<div
 			class="absolute inset-0 z-10 bg-gradient-to-t from-black/70 via-black/30 to-transparent"
